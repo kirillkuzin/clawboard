@@ -1,0 +1,39 @@
+# Dependencies
+node_modules
+npm-debug.log*
+
+# Next.js build output
+.next
+
+# Environment files (secrets)
+.env*.local
+.env
+
+# Version control
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python scaffold remnants
+__pycache__
+*.pyc
+*.pyo
+.venv
+pyproject.toml
+
+# Ouroboros
+.claude
+
+# Docker
+Dockerfile
+docker-compose.yml
+docker-compose*.yml

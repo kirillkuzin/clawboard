@@ -1,0 +1,14 @@
+services:
+  clawboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_API_URL: ${OPENCLAW_API_URL:-http://localhost:8000}
+    container_name: clawboard
+    ports:
+      - "${CLAWBOARD_PORT:-3000}:3000"
+    environment:
+      - OPENCLAW_API_URL=${OPENCLAW_API_URL:-http://localhost:8000}
+      - NODE_ENV=production
+    restart: unless-stopped
