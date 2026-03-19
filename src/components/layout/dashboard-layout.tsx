@@ -16,6 +16,7 @@ import { PluginsSection } from "@/components/crud/plugins-section";
 import { CronsSection } from "@/components/crud/crons-section";
 import { SubAgentsList } from "@/components/sub-agents/sub-agents-list";
 import { PixelOffice } from "@/components/office/pixel-office";
+import { SettingsSection } from "@/components/sections/settings-section";
 import { Menu } from "lucide-react";
 
 function DashboardInner({ children }: { children?: React.ReactNode }) {
@@ -165,6 +166,9 @@ function PageContent({ activeSection }: { activeSection: string }) {
   }
   if (activeSection === "agents") {
     return <SubAgentsList />;
+  }
+  if (activeSection === "settings") {
+    return <SettingsSection />;
   }
 
   const placeholders: Record<string, { title: string; description: string }> = {
