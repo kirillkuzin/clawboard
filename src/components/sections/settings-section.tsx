@@ -152,15 +152,15 @@ export function SettingsSection() {
                 <Button
                   variant="outline"
                   onClick={() => gateway.reconnect()}
-                  disabled={gateway.isConnecting}
+                  disabled={gateway.isWsOpen && gateway.isConnecting}
                   className="flex-1 sm:flex-none"
                 >
-                  {gateway.isConnecting ? (
+                  {gateway.isConnecting && !gateway.connectionState.wsState.includes("reconnect") ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
                     <Wifi className="mr-2 h-4 w-4" />
                   )}
-                  Reconnect
+                  {gateway.isConnected ? "Reconnect" : "Connect"}
                 </Button>
                 <Button
                   variant="outline"
@@ -457,6 +457,38 @@ function GatewayStatus({
             <p className="text-xs text-muted-foreground mt-1">
               Approve this device in the OpenClaw operator panel or another
               paired dashboard.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (gateway.connectionState.wsState === "reconnecting") {
+    return (
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
+        <div className="flex items-center gap-3">
+          <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
+          <div>
+            <p className="font-medium text-amber-400">Reconnecting...</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Check that the gateway is running and the URL is correct
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (gateway.connectionState.wsState === "failed") {
+    return (
+      <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm">
+        <div className="flex items-start gap-3">
+          <WifiOff className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-medium text-red-400">Connection failed</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Could not connect after multiple attempts. Check the URL and click Connect.
             </p>
           </div>
         </div>

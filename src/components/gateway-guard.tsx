@@ -16,7 +16,7 @@ interface GatewayGuardProps {
  * Shows connection/auth status otherwise.
  */
 export function GatewayGuard({ children, inline }: GatewayGuardProps) {
-  const { isConnected, isConnecting, isPendingPairing, error } = useGateway();
+  const { isConnected, isConnecting, isPendingPairing, connectionState, error } = useGateway();
 
   if (isConnected) {
     return <>{children}</>;
@@ -25,18 +25,6 @@ export function GatewayGuard({ children, inline }: GatewayGuardProps) {
   const wrapperClass = inline
     ? "flex items-center gap-2 p-3 text-sm text-muted-foreground"
     : "flex flex-col items-center justify-center gap-3 p-8 min-h-[200px]";
-
-  if (isConnecting) {
-    return (
-      <div className={wrapperClass}>
-        <Loader2
-          size={inline ? 16 : 24}
-          className="animate-spin text-primary"
-        />
-        <span>Connecting to OpenClaw gateway...</span>
-      </div>
-    );
-  }
 
   if (isPendingPairing) {
     return (
@@ -52,15 +40,40 @@ export function GatewayGuard({ children, inline }: GatewayGuardProps) {
     );
   }
 
+  // "failed" = gave up after max retries
+  if (connectionState.wsState === "failed") {
+    return (
+      <div className={wrapperClass}>
+        <WifiOff size={inline ? 16 : 24} className="text-muted-foreground" />
+        <div className={cn(!inline && "text-center")}>
+          <p className="font-medium text-foreground">Connection failed</p>
+          <p className="text-sm text-muted-foreground">
+            Could not reach the gateway. Check the URL in Settings.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isConnecting || connectionState.wsState === "reconnecting") {
+    return (
+      <div className={wrapperClass}>
+        <Loader2
+          size={inline ? 16 : 24}
+          className="animate-spin text-primary"
+        />
+        <span>Connecting to OpenClaw gateway...</span>
+      </div>
+    );
+  }
+
   return (
     <div className={wrapperClass}>
       <WifiOff size={inline ? 16 : 24} className="text-muted-foreground" />
       <div className={cn(!inline && "text-center")}>
         <p className="font-medium text-foreground">Not connected</p>
         <p className="text-sm text-muted-foreground">
-          {error
-            ? error
-            : "Configure the Gateway WebSocket URL in Settings to connect"}
+          {error ?? "Configure the Gateway URL in Settings to connect"}
         </p>
       </div>
     </div>

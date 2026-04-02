@@ -48,9 +48,9 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 10_000;
 const RECONNECT_BASE_MS = 1_000;
-const RECONNECT_MAX_MS = 30_000;
+const RECONNECT_MAX_MS = 10_000;
 const RECONNECT_MULTIPLIER = 1.5;
-const MAX_RECONNECT_ATTEMPTS = 20;
+const MAX_RECONNECT_ATTEMPTS = 5;
 
 // ---------------------------------------------------------------------------
 // Event handler types
@@ -128,14 +128,13 @@ export class GatewayClient {
     return this.identity;
   }
 
-  /** Update gateway URL (reconnects if connected) */
+  /** Update gateway URL — stops current connection and reconnects */
   setGatewayUrl(url: string): void {
-    const wasConnected = this.state.wsState === "connected";
     this.gatewayUrl = url;
-    if (wasConnected) {
-      this.disconnect();
-      this.connect();
-    }
+    // Always stop the current connection/reconnect cycle and reconnect
+    // to the new URL (even if we were in a reconnect loop to the old one)
+    this.disconnect();
+    this.connect();
   }
 
   /** Connect to the gateway WebSocket */
