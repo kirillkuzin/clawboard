@@ -89,7 +89,8 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
     onError,
   } = options;
 
-  const { apiUrl, apiKey, isLoaded } = useSettings();
+  const { gatewayUrl: apiUrl, isLoaded } = useSettings();
+  const apiKey = ""; // Legacy: gateway uses device identity auth, not API keys
   const [connectionState, setConnectionState] = useState<ConnectionState>(INITIAL_STATE);
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
 

@@ -52,11 +52,15 @@ src/
 
 ## Architecture
 
-### API Communication
-Client calls `/api/proxy/[...path]` with `X-OpenClaw-URL` and `X-OpenClaw-Key` headers. The Next.js server proxies to the actual OpenClaw API (avoids CORS, hides keys).
+### Gateway Communication
+All communication with OpenClaw uses **WebSocket JSON-RPC** via the gateway protocol. No REST API — OpenClaw doesn't have one. The browser connects directly to the gateway WebSocket and authenticates via **Ed25519 device identity** (challenge-response signing).
+
+Key RPC methods: `skills.status`, `agents.list`, `sessions.list`, `channels.status`, `cron.list`, `models.list`, `tools.catalog`, `config.get`, `system.health`.
+
+All data fetching goes through `useGateway()` context → `sendRequest(method, params)`.
 
 ### Settings
-All config stored in browser localStorage (`clawboard_api_key`, `clawboard_api_url`, `clawboard_gateway_ws_url`). Managed via `useSettings()` hook with cross-tab sync.
+Gateway URL stored in browser localStorage (`clawboard_gateway_ws_url`). Managed via `useSettings()` hook with cross-tab sync. No API key needed — authentication uses Ed25519 device identity.
 
 ### Real-Time Data
 Fallback chain: WebSocket (primary) -> SSE (`/api/sse`) -> Polling. Managed by `useRealtime()` hook.
