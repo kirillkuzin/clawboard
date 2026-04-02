@@ -50,7 +50,8 @@ const HEARTBEAT_TIMEOUT_MS = 10_000;
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 10_000;
 const RECONNECT_MULTIPLIER = 1.5;
-const MAX_RECONNECT_ATTEMPTS = 5;
+/** Set to 0 to disable auto-reconnect (manual connect only) */
+const MAX_RECONNECT_ATTEMPTS = 0;
 
 // ---------------------------------------------------------------------------
 // Event handler types
@@ -128,13 +129,9 @@ export class GatewayClient {
     return this.identity;
   }
 
-  /** Update gateway URL — stops current connection and reconnects */
+  /** Update gateway URL without connecting. Call connect() to use the new URL. */
   setGatewayUrl(url: string): void {
     this.gatewayUrl = url;
-    // Always stop the current connection/reconnect cycle and reconnect
-    // to the new URL (even if we were in a reconnect loop to the old one)
-    this.disconnect();
-    this.connect();
   }
 
   /** Connect to the gateway WebSocket */
@@ -163,7 +160,6 @@ export class GatewayClient {
       this.state.error = error.message;
       this.updateWsState("disconnected");
       this.handlers.onError?.(error);
-      this.scheduleReconnect();
       return;
     }
 
@@ -191,7 +187,15 @@ export class GatewayClient {
       if (!this.intentionalClose) {
         this.state.error =
           event.reason || `Connection closed (code: ${event.code})`;
-        this.scheduleReconnect();
+        // Only auto-reconnect if we were previously authenticated
+        // (i.e. connection was lost mid-session). For initial connect
+        // failures, just go to disconnected — user clicks Connect again.
+        if (this.state.authState === "authenticated") {
+          this.scheduleReconnect();
+        } else {
+          this.updateWsState("disconnected");
+          this.updateAuthState("disconnected");
+        }
       } else {
         this.updateWsState("disconnected");
         this.updateAuthState("disconnected");

@@ -369,7 +369,7 @@ export function useGatewayMonitor(
   options: UseGatewayMonitorOptions = {}
 ): UseGatewayMonitorReturn {
   const {
-    autoConnect = true,
+    autoConnect = false,
     pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
     onEvent,
     onStateChange,
@@ -799,8 +799,10 @@ export function useGatewayMonitor(
 
     const urlChanged = urlRef.current !== gatewayWsUrl;
 
-    // If client exists and URL changed, update it (triggers reconnect internally)
+    // If client exists and URL changed, update the URL but do NOT
+    // auto-connect — user must click Connect manually.
     if (clientRef.current && urlChanged) {
+      clientRef.current.disconnect();
       clientRef.current.setGatewayUrl(gatewayWsUrl);
       urlRef.current = gatewayWsUrl;
       return;

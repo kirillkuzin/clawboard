@@ -21,9 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Save,
   RotateCcw,
-  CheckCircle,
   Loader2,
   Zap,
   Database,
@@ -49,7 +47,6 @@ export function SettingsSection() {
 
   const gateway = useGateway();
 
-  const [saved, setSaved] = useState(false);
   const [deviceIdentity, setDeviceIdentity] = useState<DeviceIdentity | null>(
     null
   );
@@ -78,13 +75,8 @@ export function SettingsSection() {
     []
   );
 
-  const handleSave = useCallback(() => {
-    setGatewayUrl(gatewayUrl);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  }, [gatewayUrl, setGatewayUrl]);
-
   const handleReset = useCallback(() => {
+    gateway.disconnect();
     clearSettings();
   }, [clearSettings]);
 
@@ -147,37 +139,36 @@ export function SettingsSection() {
               {/* Live Connection Status */}
               <GatewayStatus gateway={gateway} />
             </CardContent>
-            <CardFooter className="flex flex-col gap-3 sm:flex-row sm:justify-between">
-              <div className="flex gap-2 w-full sm:w-auto">
-                <Button
-                  variant="outline"
-                  onClick={() => gateway.reconnect()}
-                  disabled={gateway.isWsOpen && gateway.isConnecting}
-                  className="flex-1 sm:flex-none"
-                >
-                  {gateway.isConnecting && !gateway.connectionState.wsState.includes("reconnect") ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Wifi className="mr-2 h-4 w-4" />
-                  )}
-                  {gateway.isConnected ? "Reconnect" : "Connect"}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleReset}
-                  className="flex-1 sm:flex-none"
-                >
-                  <RotateCcw className="mr-2 h-4 w-4" />
-                  Reset
-                </Button>
-              </div>
-              <Button onClick={handleSave} className="w-full sm:w-auto">
-                {saved ? (
-                  <CheckCircle className="mr-2 h-4 w-4" />
+            <CardFooter className="flex gap-2">
+              <Button
+                onClick={() => {
+                  setGatewayUrl(gatewayUrl);
+                  gateway.reconnect();
+                }}
+                disabled={gateway.isConnecting || !gatewayUrl.trim()}
+                className="flex-1 sm:flex-none"
+              >
+                {gateway.isConnecting ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
-                  <Save className="mr-2 h-4 w-4" />
+                  <Wifi className="mr-2 h-4 w-4" />
                 )}
-                {saved ? "Saved!" : "Save Settings"}
+                {gateway.isConnected ? "Reconnect" : "Connect"}
+              </Button>
+              {gateway.isConnected && (
+                <Button
+                  variant="outline"
+                  onClick={() => gateway.disconnect()}
+                >
+                  Disconnect
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                onClick={handleReset}
+              >
+                <RotateCcw className="mr-2 h-4 w-4" />
+                Reset
               </Button>
             </CardFooter>
           </Card>
