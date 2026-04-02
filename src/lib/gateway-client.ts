@@ -168,8 +168,10 @@ export class GatewayClient {
     }
 
     this.ws.onopen = () => {
-      this.reconnectAttempts = 0;
-      this.reconnectDelay = RECONNECT_BASE_MS;
+      // NOTE: do NOT reset reconnectAttempts here — only reset after
+      // successful authentication. Otherwise the counter resets on every
+      // WS open, creating an infinite reconnect loop when the server
+      // accepts the TCP connection but auth/protocol fails.
       this.state.error = null;
       this.updateWsState("connected");
       this.startHeartbeat();
@@ -605,6 +607,12 @@ export class GatewayClient {
 
   private updateAuthState(authState: GatewayAuthState): void {
     this.state.authState = authState;
+    // Reset reconnect counter only on successful authentication —
+    // this is the only point where we know the connection fully works.
+    if (authState === "authenticated") {
+      this.reconnectAttempts = 0;
+      this.reconnectDelay = RECONNECT_BASE_MS;
+    }
     this.handlers.onStateChange?.({ ...this.state });
   }
 
