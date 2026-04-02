@@ -1,6 +1,6 @@
 # ClawBoard
 
-Self-hosted real-time admin dashboard for [OpenClaw](https://github.com/openclaw/openclaw) AI agent framework. Provides CRUD management for skills, providers, channels, webhooks, plugins, cron jobs, and real-time monitoring of conversations and sub-agents. Features a pixel-art office visualization (PixiJS) where sub-agents appear as animated sprites.
+Self-hosted real-time admin dashboard for [OpenClaw](https://github.com/openclaw/openclaw) AI agent framework. Connects to the gateway via WebSocket JSON-RPC with Ed25519 device auth. Features a pixel-art office visualization (PixiJS) where agents appear as animated sprites.
 
 ## Tech Stack
 
@@ -8,6 +8,7 @@ Self-hosted real-time admin dashboard for [OpenClaw](https://github.com/openclaw
 - **Styling:** Tailwind CSS 4, shadcn/ui components, CSS variables for theming (class-based dark mode)
 - **Graphics:** PixiJS 8 (pixel-art office canvas)
 - **Charts:** Recharts
+- **Crypto:** tweetnacl (Ed25519 device identity)
 - **State:** React Context + custom hooks, settings in localStorage
 - **Testing:** Vitest
 
@@ -27,46 +28,60 @@ npm run test:watch   # Vitest watch mode
 ```
 src/
 ├── app/                    # Next.js App Router
-│   ├── api/                # API routes (proxy, SSE relay, health)
-│   │   └── proxy/[...path] # Proxies requests to OpenClaw API
-│   ├── settings/           # Settings page
+│   ├── settings/           # Standalone settings page
 │   └── page.tsx            # Home (DashboardLayout)
 ├── components/
 │   ├── ui/                 # shadcn/ui base components
 │   ├── layout/             # Dashboard shell, sidebar, topbar
 │   ├── office/             # Pixel-art office (PixiJS canvas, sprites)
 │   ├── sections/           # Skills, providers, settings sections
-│   ├── crud/               # Channels, webhooks, plugins, crons CRUD
-│   ├── conversations/      # Conversation monitoring
-│   ├── sub-agents/         # Sub-agent monitoring
-│   ├── monitoring/         # Advanced monitoring panels
-│   └── providers/          # React context providers (theme, realtime)
-├── hooks/                  # Custom hooks (use-crud, use-settings, use-realtime, etc.)
+│   ├── crud/               # Channels, webhooks, plugins, crons
+│   ├── conversations/      # Session list & chat history
+│   ├── sub-agents/         # Agent list & detail
+│   ├── monitoring/         # Dashboard widgets (health, cost, alerts)
+│   ├── providers/          # React context providers (theme, realtime, gateway)
+│   └── gateway-guard.tsx   # Connection status guard component
+├── hooks/
+│   ├── use-settings.ts         # Gateway URL in localStorage
+│   ├── use-gateway-monitor.ts  # Gateway WebSocket lifecycle + polling
+│   ├── use-gateway-skills.ts   # skills.status / install / update
+│   ├── use-gateway-sessions.ts # sessions.list / get + chat.history
+│   ├── use-gateway-agents.ts   # agents.list / create / update / delete
+│   ├── use-gateway-channels.ts # channels.status
+│   ├── use-gateway-crons.ts    # cron.list / add / update / remove / run
+│   ├── use-gateway-models.ts   # models.list
+│   ├── use-gateway-tools.ts    # tools.catalog
+│   └── use-gateway-config.ts   # config.get / set
 ├── lib/
-│   ├── types.ts            # All OpenClaw resource types & constants
-│   ├── api-client.ts       # Connection config, proxy fetch wrapper
-│   ├── utils.ts            # cn() utility
-│   ├── gateway/            # Gateway connection utilities
+│   ├── gateway-client.ts   # WebSocket JSON-RPC client
+│   ├── gateway-types.ts    # Protocol type definitions
+│   ├── device-identity.ts  # Ed25519 keypair management
+│   ├── gateway/            # Protocol helpers (frames, correlation)
+│   ├── types.ts            # Resource type definitions
+│   ├── utils.ts            # cn() utility + helpers
 │   └── __tests__/          # Unit tests
 ```
 
 ## Architecture
 
 ### Gateway Communication
-All communication with OpenClaw uses **WebSocket JSON-RPC** via the gateway protocol. No REST API — OpenClaw doesn't have one. The browser connects directly to the gateway WebSocket and authenticates via **Ed25519 device identity** (challenge-response signing).
+All communication with OpenClaw uses **WebSocket JSON-RPC** via the gateway protocol. No REST API — OpenClaw doesn't have one. The browser connects directly to the gateway WebSocket.
+
+**Auth flow:** ws.open -> server sends `connect.challenge` event -> client signs `challenge:nonce:deviceId` with Ed25519 -> sends `connect` request -> server responds with `authenticated` / `pending_pairing` / `rejected`.
 
 Key RPC methods: `skills.status`, `agents.list`, `sessions.list`, `channels.status`, `cron.list`, `models.list`, `tools.catalog`, `config.get`, `system.health`.
 
-All data fetching goes through `useGateway()` context → `sendRequest(method, params)`.
+All data fetching goes through `useGateway()` context -> `sendRequest(method, params)`.
 
 ### Settings
-Gateway URL stored in browser localStorage (`clawboard_gateway_ws_url`). Managed via `useSettings()` hook with cross-tab sync. No API key needed — authentication uses Ed25519 device identity.
+Gateway URL stored in browser localStorage (`clawboard_gateway_ws_url`). Managed via `useSettings()` hook with cross-tab sync. No API key — authentication uses Ed25519 device identity.
 
-### Real-Time Data
-Fallback chain: WebSocket (primary) -> SSE (`/api/sse`) -> Polling. Managed by `useRealtime()` hook.
-
-### Generic CRUD Pattern
-All resource sections use `useCrud<T>({ basePath })` which returns `{ items, loading, error, fetchItems, createItem, updateItem, deleteItem }`. Handles response normalization from various API shapes.
+### Connection Behavior
+- No auto-connect on page load — user clicks Connect manually
+- Single connection attempt; no reconnect loop on failure
+- Auto-reconnect only if a previously authenticated session drops
+- Push events for real-time updates after `sessions.subscribe`
+- 30-second polling for metrics (cost, token usage, trends)
 
 ## Conventions
 
@@ -82,12 +97,8 @@ All resource sections use `useCrud<T>({ basePath })` which returns `{ items, loa
 
 | Variable | Default | Scope |
 |----------|---------|-------|
-| `OPENCLAW_API_URL` | `http://localhost:8000` | Server |
-| `NEXT_PUBLIC_OPENCLAW_API_URL` | same | Client |
-| `NEXT_PUBLIC_OPENCLAW_GATEWAY_WS_URL` | `ws://localhost:8080/ws` | Client |
+| `NEXT_PUBLIC_OPENCLAW_GATEWAY_WS_URL` | `ws://localhost:18789` | Client |
 
 ## Adding Features
 
-**New CRUD section:** Add type to `lib/types.ts` -> create component in `components/crud/` using `useCrud()` -> add nav item to `sidebar.tsx` -> add render case to `dashboard-layout.tsx`.
-
-**New API route:** Create `src/app/api/[feature]/route.ts` with typed `GET`/`POST` handlers returning `NextResponse`.
+**New gateway section:** Create `use-gateway-foo.ts` hook using `useGateway().sendRequest()` -> create component in `components/` with `<GatewayGuard>` wrapper -> add nav item to `sidebar.tsx` -> add render case to `dashboard-layout.tsx`.

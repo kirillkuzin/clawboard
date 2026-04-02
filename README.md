@@ -1,6 +1,6 @@
 # ClawBoard
 
-> Admin dashboard for [OpenClaw](https://github.com/openclaw/openclaw) AI agent framework — featuring a real-time pixel-art office visualization.
+> Self-hosted admin dashboard for [OpenClaw](https://github.com/openclaw/openclaw) AI agent framework — with real-time pixel-art office visualization.
 
 ![Next.js](https://img.shields.io/badge/Next.js-15-black?logo=next.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)
@@ -10,38 +10,82 @@
 
 ## Overview
 
-ClawBoard is a comprehensive, self-hosted admin dashboard for managing and monitoring an OpenClaw instance. It connects to your OpenClaw REST API and provides full CRUD management for skills, model providers, channels, webhooks, plugins, and cron jobs — plus read-only monitoring for conversations and sub-agents.
+ClawBoard connects directly to the OpenClaw gateway via **WebSocket JSON-RPC** and authenticates using **Ed25519 device identity** — the same protocol the built-in control UI uses. No REST API, no API keys, no proxy layers.
 
-The home page features a **pixel-art office** rendered with PixiJS where sub-agents appear as animated characters in real time. Agents spawn, work, idle, and despawn as your OpenClaw instance processes tasks.
+The home page features a **pixel-art office** rendered with PixiJS where agents appear as animated characters in real time.
 
-### Key Features
+### Features
 
-- **Pixel-Art Office** — Real-time canvas visualization of agent activity powered by PixiJS
-- **CRUD Management** — Skills, Model Providers, Channels, Webhooks, Plugins, Cron Jobs
-- **Live Monitoring** — Conversation history and sub-agent activity via WebSocket/SSE
-- **Collapsible Sidebar** — Icon-only by default, expands on hover/click, hamburger on mobile
+- **Gateway-native** — WebSocket JSON-RPC with Ed25519 challenge-response auth
+- **Pixel-Art Office** — Real-time PixiJS canvas visualization of agent activity
+- **Skills Management** — Install, enable/disable skills via `skills.status` / `skills.install` / `skills.update`
+- **Agents** — Browse and inspect agents via `agents.list`
+- **Sessions** — View active sessions and chat history via `sessions.list` / `chat.history`
+- **Models & Providers** — See available models grouped by provider via `models.list`
+- **Channels** — Monitor channel connection status via `channels.status`
+- **Cron Jobs** — Full CRUD via `cron.list` / `cron.add` / `cron.update` / `cron.remove`
+- **Plugins & Tools** — Browse tool catalog via `tools.catalog`
+- **Webhooks** — View hook mappings from config via `config.get`
+- **Monitoring Dashboard** — System health, cost tracking, token usage, alerts, trends
+- **Device Pairing** — Approve/reject device pairing requests
 - **Dark/Light Theme** — Toggle with localStorage persistence
-- **Connection Health Check** — Test API connectivity from the Settings page
-- **Responsive Design** — Works on desktop, tablet, and mobile
-- **Docker Ready** — One-command deployment with `docker compose up`
-- **No Database** — All settings stored in browser localStorage
+- **Responsive** — Desktop, tablet, and mobile
+- **Docker Ready** — Standalone output, one-command deployment
 
-## Screenshots
+## Architecture
 
-<!-- Add screenshots here -->
+```
+Browser ──WebSocket──> OpenClaw Gateway (JSON-RPC)
+                       ├── Ed25519 device auth (challenge-response)
+                       ├── RPC methods (skills, agents, sessions, ...)
+                       └── Push events (health, sessions, alerts, ...)
+```
+
+All data flows through a single WebSocket connection. No REST API, no server-side proxy.
+
+### Authentication Flow
+
+1. Browser opens WebSocket to gateway
+2. Gateway sends `connect.challenge` event with `{challenge, nonce}`
+3. Browser signs `challenge:nonce:deviceId` with Ed25519 secret key
+4. Browser sends `connect` request with signature + device identity
+5. Gateway responds with `authenticated` (scopes granted) or `pending_pairing`
+
+Device identity (Ed25519 keypair) is auto-generated and stored in `localStorage`. First connection requires operator approval (pairing).
+
+### Data Fetching
+
+All sections use the `useGateway()` React context which provides `sendRequest(method, params)`:
+
+| Section | RPC Methods |
+|---------|-------------|
+| Skills | `skills.status`, `skills.install`, `skills.update` |
+| Agents | `agents.list`, `agents.create`, `agents.update`, `agents.delete` |
+| Sessions | `sessions.list`, `sessions.get`, `chat.history`, `chat.send` |
+| Models | `models.list` |
+| Channels | `channels.status`, `channels.logout` |
+| Cron Jobs | `cron.list`, `cron.add`, `cron.update`, `cron.remove`, `cron.run` |
+| Tools | `tools.catalog` |
+| Config | `config.get`, `config.set` |
+| Health | `system.health` |
+| Metrics | `metrics.cost`, `metrics.token_usage`, `metrics.trends` |
+| Pairing | `pairing.list`, `pairing.approve`, `pairing.reject` |
+
+Real-time updates come via server push events (`sessions.changed`, `health.update`, `cost.update`, etc.) after subscribing with `sessions.subscribe`.
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Framework | [Next.js](https://nextjs.org) (App Router) |
-| Language | [TypeScript](https://www.typescriptlang.org) |
-| Styling | [Tailwind CSS](https://tailwindcss.com) |
-| Components | [shadcn/ui](https://ui.shadcn.com) |
-| Visualization | [PixiJS](https://pixijs.com) (HTML5 Canvas) |
-| Theming | [next-themes](https://github.com/pacocoursey/next-themes) |
+| Framework | [Next.js 15](https://nextjs.org) (App Router, Turbopack) |
+| Language | [TypeScript 5](https://www.typescriptlang.org) (strict) |
+| Styling | [Tailwind CSS 4](https://tailwindcss.com) + [shadcn/ui](https://ui.shadcn.com) |
+| Visualization | [PixiJS 8](https://pixijs.com) (HTML5 Canvas) |
+| Charts | [Recharts](https://recharts.org) |
+| Crypto | [tweetnacl](https://github.com/nicktallant/tweetnacl-js) (Ed25519) |
 | Icons | [Lucide](https://lucide.dev) |
-| Deployment | Docker / Docker Compose |
+| Testing | [Vitest](https://vitest.dev) |
+| Deployment | Docker (standalone output) |
 
 ## Getting Started
 
@@ -53,145 +97,120 @@ The home page features a **pixel-art office** rendered with PixiJS where sub-age
 ### Quick Start
 
 ```bash
-# Clone the repository
 git clone https://github.com/kirillkuzin/clawboard.git
 cd clawboard
-
-# Install dependencies
 npm install
-
-# Start development server
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), navigate to **Settings**, enter your OpenClaw API URL and API key, and hit **Test Connection**.
+Open [http://localhost:3000](http://localhost:3000), go to **Settings**, enter your OpenClaw gateway WebSocket URL (e.g. `ws://localhost:18789`), and click **Connect**.
+
+On first connection, the device will need to be paired — approve it from the OpenClaw operator panel.
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENCLAW_API_URL` | `http://localhost:8000` | Base URL of your OpenClaw instance |
-| `CLAWBOARD_PORT` | `3000` | Port to expose ClawBoard on (Docker only) |
-
-Copy `.env.example` to `.env.local` and adjust as needed:
+| `NEXT_PUBLIC_OPENCLAW_GATEWAY_WS_URL` | `ws://localhost:18789` | Gateway WebSocket URL |
 
 ```bash
 cp .env.example .env.local
+# Edit .env.local with your gateway URL
 ```
 
-## Docker Deployment
-
-### Using Docker Compose (recommended)
+## Docker
 
 ```bash
-# With default settings
+# Docker Compose
 docker compose up -d
 
-# With custom OpenClaw URL
-OPENCLAW_API_URL=https://openclaw.example.com docker compose up -d
-```
-
-### Using Docker directly
-
-```bash
+# Or directly
 docker build -t clawboard .
-docker run -d -p 3000:3000 -e OPENCLAW_API_URL=http://your-openclaw:8000 clawboard
+docker run -d -p 3000:3000 clawboard
 ```
 
 ## Project Structure
 
 ```
 src/
-├── app/                    # Next.js App Router
-│   ├── api/                # API routes
-│   │   ├── health/         # Connection health check proxy
-│   │   ├── sse/            # SSE relay for real-time events
-│   │   ├── proxy/          # Generic API proxy to OpenClaw
-│   │   ├── conversations/  # Conversations API proxy
-│   │   └── sub-agents/     # Sub-agents API proxy (+ stop action)
-│   └── settings/           # Settings page (standalone route)
+├── app/                        # Next.js App Router
+│   ├── page.tsx                # Home (DashboardLayout)
+│   └── settings/               # Standalone settings page
 ├── components/
-│   ├── office/             # Pixel-art office visualization
-│   ├── layout/             # Dashboard shell, sidebar, topbar
-│   ├── crud/               # CRUD sections (channels, webhooks, plugins, crons)
-│   ├── sections/           # Skills, providers, settings sections
-│   ├── conversations/      # Conversation list & detail views
-│   ├── sub-agents/         # Sub-agent monitoring components
-│   ├── providers/          # React context providers (theme, realtime)
-│   └── ui/                 # shadcn/ui base components
-├── hooks/                  # Custom React hooks
-│   ├── use-settings.ts     # localStorage-backed settings
-│   ├── use-websocket.ts    # WebSocket connection management
-│   ├── use-sse.ts          # SSE connection management
-│   ├── use-realtime.ts     # Unified realtime data hook
-│   ├── use-crud.ts         # Generic CRUD operations hook
-│   └── use-sidebar.ts      # Sidebar state management
+│   ├── office/                 # Pixel-art office (PixiJS canvas, sprites)
+│   ├── layout/                 # Dashboard shell, sidebar, topbar
+│   ├── sections/               # Skills, providers, settings sections
+│   ├── crud/                   # Channels, webhooks, plugins, crons
+│   ├── conversations/          # Session list & chat history
+│   ├── sub-agents/             # Agent list & detail
+│   ├── monitoring/             # Dashboard widgets (health, cost, alerts)
+│   ├── providers/              # React contexts (theme, realtime, gateway)
+│   ├── gateway-guard.tsx       # Shows connection status when not connected
+│   └── ui/                     # shadcn/ui base components
+├── hooks/
+│   ├── use-settings.ts         # Gateway URL in localStorage
+│   ├── use-gateway-monitor.ts  # Gateway WebSocket lifecycle + polling
+│   ├── use-gateway-skills.ts   # skills.status / install / update
+│   ├── use-gateway-sessions.ts # sessions.list / get + chat.history
+│   ├── use-gateway-agents.ts   # agents.list / create / update / delete
+│   ├── use-gateway-channels.ts # channels.status
+│   ├── use-gateway-crons.ts    # cron.list / add / update / remove / run
+│   ├── use-gateway-models.ts   # models.list
+│   ├── use-gateway-tools.ts    # tools.catalog
+│   └── use-gateway-config.ts   # config.get / set
 └── lib/
-    ├── pixel-office/       # PixiJS sprite generation & management
-    ├── types/              # TypeScript type definitions
-    ├── api-client.ts       # OpenClaw API client
-    └── realtime.ts         # Realtime connection utilities
+    ├── gateway-client.ts       # WebSocket JSON-RPC client
+    ├── gateway-types.ts        # Protocol type definitions
+    ├── device-identity.ts      # Ed25519 keypair management
+    ├── gateway/                # Protocol helpers (frames, correlation)
+    ├── types.ts                # Resource type definitions
+    ├── utils.ts                # cn() + helpers
+    └── __tests__/              # Unit tests (86 tests)
+```
+
+## Development
+
+```bash
+npm run dev          # Dev server (port 3000, Turbopack)
+npm run build        # Production build
+npm run start        # Start production server
+npm run test         # Run tests (Vitest)
+npm run test:watch   # Watch mode
 ```
 
 ## Dashboard Sections
 
 ### Pixel Office (Home)
-Real-time pixel-art canvas where each sub-agent is represented as a programmatically generated sprite character. Agents have unique color palettes and display animation states: **idle**, **working/typing**, **spawning**, and **despawning**. Hover over any agent to see a tooltip with its name, current task, and uptime.
+Real-time pixel-art canvas where each agent is a programmatically generated sprite. Agents display animation states: idle, working, spawning, despawning.
 
-### Management (CRUD)
+### Management
+| Section | Mode | Gateway Methods |
+|---------|------|----------------|
+| Skills | Install / Toggle | `skills.status`, `skills.install`, `skills.update` |
+| Models & Providers | Read-only | `models.list` |
+| Channels | Read-only + Logout | `channels.status`, `channels.logout` |
+| Plugins & Tools | Read-only | `tools.catalog` |
+| Webhooks | Read-only (from config) | `config.get` |
+| Cron Jobs | Full CRUD + Run | `cron.list`, `cron.add`, `cron.update`, `cron.remove`, `cron.run` |
+
+### Monitoring
 | Section | Description |
 |---------|-------------|
-| **Skills** | Create, edit, delete, and toggle agent skills |
-| **Model Providers** | Manage AI model configurations and API endpoints |
-| **Channels** | Configure messaging platform connections (Slack, Telegram, etc.) |
-| **Webhooks** | Set up webhook integrations with event filtering |
-| **Plugins** | Install, enable/disable, and configure plugins |
-| **Cron Jobs** | Schedule and manage recurring tasks |
-
-### Monitoring (Read-Only)
-| Section | Description |
-|---------|-------------|
-| **Conversations** | Browse conversation history across all channels |
-| **Sub-Agents** | Monitor active sub-agents with stop/kill capability |
+| Sessions | Browse sessions, view chat history |
+| Agents | Browse agents, view details and system prompts |
+| Dashboard | System health, cost tracking, token usage, alerts, trends |
+| Pairing | Approve/reject device pairing requests |
 
 ### Settings
-- API URL and API Key configuration
-- **Test Connection** button with latency reporting
-- Dark / Light / System theme toggle
-- All settings persist in `localStorage`
-
-## Real-Time Architecture
-
-ClawBoard uses a fallback-based approach for real-time data:
-
-1. **WebSocket** — Attempts direct WebSocket connection to OpenClaw
-2. **SSE Relay** — Falls back to Next.js API route that polls OpenClaw and relays events via Server-Sent Events
-3. **Polling** — Final fallback with configurable interval
-
-The Next.js API routes at `/api/sse` and `/api/proxy` act as a proxy layer, keeping the OpenClaw API key server-side when possible.
-
-## Development
-
-```bash
-# Development server with hot reload
-npm run dev
-
-# Type checking
-npx tsc --noEmit
-
-# Production build
-npm run build
-
-# Start production server
-npm start
-
-# Lint
-npm run lint
-```
+- Gateway URL configuration
+- Manual Connect / Disconnect / Reset
+- Live connection status with latency
+- Device identity info (public key, device ID, pairing status, scopes)
+- Theme selector
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome!
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
@@ -201,11 +220,10 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
 - [OpenClaw](https://github.com/openclaw/openclaw) — The AI agent framework this dashboard manages
 - [shadcn/ui](https://ui.shadcn.com) — Beautiful, accessible UI components
 - [PixiJS](https://pixijs.com) — Fast 2D rendering engine powering the pixel office
-- Built with [Ouroboros](https://github.com/Q00/ouroboros) — Specification-first AI development workflow
