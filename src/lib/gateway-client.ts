@@ -74,9 +74,17 @@ export interface GatewayClientHandlers {
 // GatewayClient
 // ---------------------------------------------------------------------------
 
+export interface GatewayClientOptions {
+  /** Explicit gateway token (shared secret) */
+  token?: string;
+  /** Password for password-based auth */
+  password?: string;
+}
+
 export class GatewayClient {
   private ws: WebSocket | null = null;
   private gatewayUrl: string;
+  private opts: GatewayClientOptions;
   private handlers: GatewayClientHandlers = {};
 
   // Auth & identity
@@ -106,8 +114,9 @@ export class GatewayClient {
   private reconnectAttempts = 0;
   private intentionalClose = false;
 
-  constructor(gatewayUrl: string) {
+  constructor(gatewayUrl: string, opts: GatewayClientOptions = {}) {
     this.gatewayUrl = gatewayUrl;
+    this.opts = opts;
   }
 
   // -------------------------------------------------------------------------
@@ -132,6 +141,11 @@ export class GatewayClient {
   /** Update gateway URL without connecting. Call connect() to use the new URL. */
   setGatewayUrl(url: string): void {
     this.gatewayUrl = url;
+  }
+
+  /** Update auth options (token, password). Takes effect on next connect(). */
+  setOptions(opts: GatewayClientOptions): void {
+    this.opts = { ...this.opts, ...opts };
   }
 
   /** Connect to the gateway WebSocket */
@@ -323,14 +337,34 @@ export class GatewayClient {
     const signature = signChallenge(canonicalPayload, this.identity.secretKey);
 
     try {
-      // Send "connect" request (NOT "device.auth" or "device.auth.challenge")
+      // Build auth field — includes token/password if configured,
+      // plus device signature and cached deviceToken
+      const auth: Record<string, unknown> = {};
+      if (this.opts.token) auth.token = this.opts.token;
+      if (this.opts.password) auth.password = this.opts.password;
+      if (this.identity.deviceToken) auth.deviceToken = this.identity.deviceToken;
+      auth.signature = signature;
+      auth.nonce = nonce;
+
+      // Send "connect" request matching the original OpenClaw protocol
       const response = await this.request("connect", {
-        deviceId: this.identity.deviceId,
-        publicKey: this.identity.publicKey,
-        deviceToken: this.identity.deviceToken || undefined,
-        deviceLabel: this.identity.deviceLabel,
-        signature,
-        nonce,
+        minProtocol: 3,
+        maxProtocol: 3,
+        client: {
+          name: "ClawBoard",
+          version: "0.1.0",
+        },
+        role: "CONTROL_UI_OPERATOR",
+        scopes: ["operator.read", "operator.write", "operator.admin", "operator.pairing", "operator.approvals"],
+        device: {
+          deviceId: this.identity.deviceId,
+          publicKey: this.identity.publicKey,
+          deviceLabel: this.identity.deviceLabel,
+        },
+        caps: ["tool-events"],
+        auth,
+        userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "ClawBoard",
+        locale: typeof navigator !== "undefined" ? navigator.language : "en",
       });
 
       if (!response.ok) {

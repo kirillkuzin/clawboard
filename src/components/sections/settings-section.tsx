@@ -39,11 +39,17 @@ import { ThemeSelector } from "@/components/theme-toggle";
 export function SettingsSection() {
   const {
     gatewayUrl,
+    gatewayToken,
+    gatewayPassword,
     setGatewayUrl,
+    setGatewayToken,
+    setGatewayPassword,
     clearSettings,
     isLoaded,
     defaultGatewayUrl,
   } = useSettings();
+
+  const [showToken, setShowToken] = useState(false);
 
   const gateway = useGateway();
 
@@ -133,6 +139,64 @@ export function SettingsSection() {
                     NEXT_PUBLIC_OPENCLAW_GATEWAY_WS_URL
                   </code>{" "}
                   env var.
+                </p>
+              </div>
+
+              {/* Token (optional) */}
+              <div className="space-y-2">
+                <Label htmlFor="gateway-token">
+                  Token{" "}
+                  <span className="text-muted-foreground font-normal">
+                    (optional)
+                  </span>
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="gateway-token"
+                    type={showToken ? "text" : "password"}
+                    placeholder="Gateway shared token"
+                    value={gatewayToken}
+                    onChange={(e) => setGatewayToken(e.target.value)}
+                    autoComplete="off"
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowToken(!showToken)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {showToken ? (
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    )}
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Shared secret token configured on the gateway. Leave empty if
+                  using device identity only.
+                </p>
+              </div>
+
+              {/* Password (optional, not persisted) */}
+              <div className="space-y-2">
+                <Label htmlFor="gateway-password">
+                  Password{" "}
+                  <span className="text-muted-foreground font-normal">
+                    (optional, not saved)
+                  </span>
+                </Label>
+                <Input
+                  id="gateway-password"
+                  type="password"
+                  placeholder="Gateway password"
+                  value={gatewayPassword}
+                  onChange={(e) => setGatewayPassword(e.target.value)}
+                  autoComplete="off"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Password configured on the gateway. Not stored — cleared on
+                  page reload.
                 </p>
               </div>
 

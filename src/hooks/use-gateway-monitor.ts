@@ -378,7 +378,7 @@ export function useGatewayMonitor(
     onError,
   } = options;
 
-  const { gatewayWsUrl, isLoaded } = useSettings();
+  const { gatewayWsUrl, gatewayToken, gatewayPassword, isLoaded } = useSettings();
 
   // ── React state mirroring GatewayClient ──────────────────────────────
   const [connectionState, setConnectionState] =
@@ -804,14 +804,28 @@ export function useGatewayMonitor(
     if (clientRef.current && urlChanged) {
       clientRef.current.disconnect();
       clientRef.current.setGatewayUrl(gatewayWsUrl);
+      clientRef.current.setOptions({
+        token: gatewayToken || undefined,
+        password: gatewayPassword || undefined,
+      });
       urlRef.current = gatewayWsUrl;
       return;
+    }
+    // Update auth options even if URL didn't change
+    if (clientRef.current) {
+      clientRef.current.setOptions({
+        token: gatewayToken || undefined,
+        password: gatewayPassword || undefined,
+      });
     }
 
     // Create new client if none exists
     if (!clientRef.current) {
       urlRef.current = gatewayWsUrl;
-      const client = new GatewayClient(gatewayWsUrl);
+      const client = new GatewayClient(gatewayWsUrl, {
+        token: gatewayToken || undefined,
+        password: gatewayPassword || undefined,
+      });
 
       client.on({
         onStateChange: (state) => {
@@ -882,7 +896,7 @@ export function useGatewayMonitor(
       listenersRef.current.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoaded, gatewayWsUrl, autoConnect]);
+  }, [isLoaded, gatewayWsUrl, gatewayToken, gatewayPassword, autoConnect]);
 
   // ── Stable action callbacks ───────────────────────────────────────────
 
