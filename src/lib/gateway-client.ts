@@ -272,79 +272,32 @@ export class GatewayClient {
   // -------------------------------------------------------------------------
 
   /**
-   * Step 1: Initiate device authentication.
+   * Step 1: Mark as waiting for server challenge.
    *
-   * Sends "device.auth" request with deviceId, publicKey, and any cached
-   * deviceToken. If the token is still valid, the server responds with
-   * "authenticated" status immediately. Otherwise it returns a challenge.
+   * The OpenClaw gateway sends a `connect.challenge` event after the
+   * WebSocket opens. We do NOT send anything proactively — just wait.
    */
-  private async startAuth(): Promise<void> {
+  private startAuth(): void {
     if (!this.identity) {
       this.updateAuthState("error");
       this.state.error = "No device identity available";
       return;
     }
-
     this.updateAuthState("authenticating");
-
-    try {
-      const response = await this.request("device.auth", {
-        deviceId: this.identity.deviceId,
-        publicKey: this.identity.publicKey,
-        deviceToken: this.identity.deviceToken || undefined,
-        deviceLabel: this.identity.deviceLabel,
-      });
-
-      if (!response.ok) {
-        this.updateAuthState("error");
-        this.state.error =
-          response.error?.message || "Authentication request failed";
-        this.handlers.onError?.(new Error(this.state.error));
-        return;
-      }
-
-      const result = response.result as unknown as AuthResult;
-
-      switch (result.status) {
-        case "authenticated":
-          // Token was valid — we're in!
-          this.state.scopes = result.scopes;
-          this.state.lastAuthAt = Date.now();
-          if (result.deviceToken) {
-            updateDeviceToken(result.deviceToken);
-          }
-          this.updateAuthState("authenticated");
-          this.handlers.onAuthenticated?.(result.scopes);
-          break;
-
-        case "challenge":
-          // Need to sign the challenge
-          await this.handleAuthChallenge(result as AuthChallengeResult);
-          break;
-
-        default:
-          this.updateAuthState("error");
-          this.state.error = `Unexpected auth status: ${result.status}`;
-          break;
-      }
-    } catch (err) {
-      this.updateAuthState("error");
-      this.state.error =
-        err instanceof Error ? err.message : "Auth handshake failed";
-      this.handlers.onError?.(
-        err instanceof Error ? err : new Error(this.state.error)
-      );
-    }
+    // Now we wait for the server to send a "connect.challenge" event.
+    // That event is handled in handleEvent() → handleConnectChallenge().
   }
 
   /**
-   * Step 2: Handle the challenge from the server.
+   * Step 2: Handle the `connect.challenge` event from the server.
    *
-   * Constructs the canonical payload: `${challenge}:${nonce}:${deviceId}`
-   * Signs it with the Ed25519 secret key and sends the response.
+   * Server sends: { frame: "event", type: "connect.challenge", data: { challenge, nonce } }
+   *
+   * Client signs `${challenge}:${nonce}:${deviceId}` and responds with
+   * a `connect` request containing the signature + device identity.
    */
-  private async handleAuthChallenge(
-    challengeResult: AuthChallengeResult
+  private async handleConnectChallenge(
+    data: Record<string, unknown>
   ): Promise<void> {
     if (!this.identity) {
       this.updateAuthState("error");
@@ -354,7 +307,14 @@ export class GatewayClient {
 
     this.updateAuthState("challenge_signing");
 
-    const { challenge, nonce } = challengeResult;
+    const challenge = data.challenge as string;
+    const nonce = data.nonce as string;
+
+    if (!challenge || !nonce) {
+      this.updateAuthState("error");
+      this.state.error = "Invalid connect.challenge: missing challenge or nonce";
+      return;
+    }
 
     // Construct canonical payload: challenge:nonce:deviceId
     const canonicalPayload = `${challenge}:${nonce}:${this.identity.deviceId}`;
@@ -363,8 +323,12 @@ export class GatewayClient {
     const signature = signChallenge(canonicalPayload, this.identity.secretKey);
 
     try {
-      const response = await this.request("device.auth.challenge", {
+      // Send "connect" request (NOT "device.auth" or "device.auth.challenge")
+      const response = await this.request("connect", {
         deviceId: this.identity.deviceId,
+        publicKey: this.identity.publicKey,
+        deviceToken: this.identity.deviceToken || undefined,
+        deviceLabel: this.identity.deviceLabel,
         signature,
         nonce,
       });
@@ -372,7 +336,7 @@ export class GatewayClient {
       if (!response.ok) {
         this.updateAuthState("error");
         this.state.error =
-          response.error?.message || "Challenge response rejected";
+          response.error?.message || "Authentication rejected";
         this.handlers.onError?.(new Error(this.state.error));
         return;
       }
@@ -384,7 +348,6 @@ export class GatewayClient {
           // Pairing approved — store token and mark authenticated
           if (result.deviceToken) {
             updateDeviceToken(result.deviceToken);
-            // Reload identity to pick up new token
             this.identity = {
               ...this.identity,
               deviceToken: result.deviceToken,
@@ -397,7 +360,6 @@ export class GatewayClient {
           break;
 
         case "authenticated":
-          // Already paired — update scopes
           this.state.scopes = result.scopes;
           this.state.lastAuthAt = Date.now();
           if (result.deviceToken) {
@@ -408,7 +370,6 @@ export class GatewayClient {
           break;
 
         case "pending_pairing":
-          // Awaiting operator approval
           this.updateAuthState("pending_pairing");
           this.handlers.onPendingPairing?.();
           break;
@@ -420,7 +381,7 @@ export class GatewayClient {
 
         default:
           this.updateAuthState("error");
-          this.state.error = `Unexpected challenge result: ${(result as AuthResult).status}`;
+          this.state.error = `Unexpected auth result: ${(result as AuthResult).status}`;
           break;
       }
     } catch (err) {
@@ -477,6 +438,12 @@ export class GatewayClient {
 
   /** Handle a push event from the server */
   private handleEvent(event: GatewayEvent): void {
+    // Server sends connect.challenge after WS opens — this starts the auth flow
+    if (event.type === "connect.challenge") {
+      this.handleConnectChallenge(event.data);
+      return;
+    }
+
     // Handle auth-related events (e.g., pairing approved while pending)
     if (event.type === "device.paired") {
       const data = event.data as {
