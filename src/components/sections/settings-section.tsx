@@ -1,7 +1,13 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useSettings } from "@/hooks/use-settings";
+import {
+  type DeviceIdentity,
+  loadDeviceIdentity,
+  clearDeviceIdentity,
+  getOrCreateDeviceIdentity,
+} from "@/lib/device-identity";
 import {
   Card,
   CardHeader,
@@ -13,7 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Eye, EyeOff, Save, RotateCcw, CheckCircle, XCircle, Loader2, Zap, Database } from "lucide-react";
+import { Eye, EyeOff, Save, RotateCcw, CheckCircle, XCircle, Loader2, Zap, Database, Fingerprint, Copy, Check, Trash2 } from "lucide-react";
 import { SETTINGS_STORAGE_KEYS } from "@/hooks/use-settings";
 import { ThemeSelector } from "@/components/theme-toggle";
 
@@ -28,8 +34,11 @@ interface ConnectionResult {
 }
 
 export function SettingsSection() {
-  const { apiKey, apiUrl, setApiKey, setApiUrl, clearSettings, isLoaded, defaultApiUrl } =
-    useSettings();
+  const {
+    apiKey, apiUrl, gatewayWsUrl,
+    setApiKey, setApiUrl, setGatewayWsUrl,
+    clearSettings, isLoaded, defaultApiUrl, defaultGatewayWsUrl,
+  } = useSettings();
 
   const [showApiKey, setShowApiKey] = useState(false);
   const [connectionResult, setConnectionResult] = useState<ConnectionResult>({
@@ -38,6 +47,29 @@ export function SettingsSection() {
   });
   const [saved, setSaved] = useState(false);
   const [showServerInfo, setShowServerInfo] = useState(false);
+  const [deviceIdentity, setDeviceIdentity] = useState<DeviceIdentity | null>(null);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  // Load device identity on mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const identity = loadDeviceIdentity();
+    setDeviceIdentity(identity);
+  }, []);
+
+  const handleResetDeviceIdentity = useCallback(() => {
+    clearDeviceIdentity();
+    // Generate a fresh identity immediately
+    const newIdentity = getOrCreateDeviceIdentity();
+    setDeviceIdentity(newIdentity);
+  }, []);
+
+  const handleCopyToClipboard = useCallback((value: string, field: string) => {
+    navigator.clipboard.writeText(value).then(() => {
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(null), 2000);
+    });
+  }, []);
 
   const handleTestConnection = useCallback(async () => {
     if (!apiUrl) {
@@ -216,6 +248,27 @@ export function SettingsSection() {
                 </p>
               </div>
 
+              {/* Gateway WebSocket URL Field */}
+              <div className="space-y-2">
+                <Label htmlFor="gateway-ws-url">Gateway WebSocket URL</Label>
+                <Input
+                  id="gateway-ws-url"
+                  type="text"
+                  placeholder={defaultGatewayWsUrl}
+                  value={gatewayWsUrl}
+                  onChange={(e) => setGatewayWsUrl(e.target.value)}
+                  autoComplete="url"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Direct WebSocket URL for the OpenClaw gateway (e.g.{" "}
+                  <code className="rounded bg-muted px-1 py-0.5">
+                    ws://localhost:8080/ws
+                  </code>
+                  ). This is a separate endpoint from the API URL and is used for
+                  real-time monitoring data.
+                </p>
+              </div>
+
               {/* Connection Test Result */}
               {connectionResult.status !== "idle" && (
                 <div
@@ -338,6 +391,133 @@ export function SettingsSection() {
                 <Label>Theme</Label>
                 <ThemeSelector />
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Device Identity Card */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Fingerprint className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <CardTitle className="text-base">Device Identity</CardTitle>
+                    <CardDescription>
+                      Ed25519 keypair used for gateway authentication. Auto-generated on first connection.
+                    </CardDescription>
+                  </div>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {deviceIdentity ? (
+                <>
+                  <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
+                    {/* Device Label */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-muted-foreground">Device Name</span>
+                      <span className="text-sm font-mono">{deviceIdentity.deviceLabel}</span>
+                    </div>
+
+                    {/* Device ID */}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">Device ID</span>
+                      <div className="flex items-center gap-1.5">
+                        <code className="text-xs font-mono rounded bg-muted px-1.5 py-0.5 max-w-[200px] truncate">
+                          {deviceIdentity.deviceId}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyToClipboard(deviceIdentity.deviceId, "deviceId")}
+                          className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                          aria-label="Copy device ID"
+                        >
+                          {copiedField === "deviceId" ? (
+                            <Check className="h-3.5 w-3.5 text-green-500" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Public Key */}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">Public Key</span>
+                      <div className="flex items-center gap-1.5">
+                        <code className="text-xs font-mono rounded bg-muted px-1.5 py-0.5 max-w-[200px] truncate">
+                          {deviceIdentity.publicKey}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyToClipboard(deviceIdentity.publicKey, "publicKey")}
+                          className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                          aria-label="Copy public key"
+                        >
+                          {copiedField === "publicKey" ? (
+                            <Check className="h-3.5 w-3.5 text-green-500" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Pairing Status */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-muted-foreground">Pairing Status</span>
+                      <span className={`text-xs font-medium ${deviceIdentity.deviceToken ? "text-green-500" : "text-yellow-500"}`}>
+                        {deviceIdentity.deviceToken ? "Paired" : "Not Paired"}
+                      </span>
+                    </div>
+
+                    {/* Created Date */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-muted-foreground">Created</span>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(deviceIdentity.createdAt).toLocaleDateString(undefined, {
+                          year: "numeric",
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-muted-foreground max-w-[280px]">
+                      Resetting will generate a new keypair. You will need to re-pair with the gateway.
+                    </p>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={handleResetDeviceIdentity}
+                    >
+                      <Trash2 className="mr-2 h-3.5 w-3.5" />
+                      Reset Identity
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-lg border border-dashed border-border p-6 text-center">
+                  <Fingerprint className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
+                  <p className="text-sm text-muted-foreground mb-3">
+                    No device identity found. One will be generated automatically when you connect to the gateway.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const identity = getOrCreateDeviceIdentity();
+                      setDeviceIdentity(identity);
+                    }}
+                  >
+                    Generate Now
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
 
