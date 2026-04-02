@@ -6,7 +6,7 @@
  * automatic frame advancement via requestAnimationFrame.
  */
 
-import { useRef, useEffect, useCallback, useState } from "react";
+import { useRef, useEffect, useCallback, useState, useMemo } from "react";
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -70,10 +70,11 @@ export function useSpriteAnimation(
 ): SpriteAnimationResult {
   const frameCounts = config?.frameCounts ?? DEFAULT_FRAME_COUNTS;
   const baseFps = config?.fps ?? 8;
-  const speedMultipliers = {
+  const configSpeedMultipliers = config?.speedMultipliers;
+  const speedMultipliers = useMemo(() => ({
     ...DEFAULT_SPEED_MULTIPLIERS,
-    ...config?.speedMultipliers,
-  };
+    ...configSpeedMultipliers,
+  }), [configSpeedMultipliers]);
   const autoPlay = config?.autoPlay ?? true;
 
   const [animationState, setAnimationStateRaw] = useState<SpriteAnimationState>(initialState);

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getOpenClawConfig, buildAuthHeaders, sanitizePathParam, proxyErrorResponse } from "@/lib/api-config";
 
 /**
  * GET /api/conversations/[id]
@@ -31,25 +32,19 @@ export interface ConversationDetail {
   summary?: string;
 }
 
-function getOpenClawConfig(request: NextRequest) {
-  const apiUrl =
-    request.headers.get("X-OpenClaw-URL") ||
-    process.env.OPENCLAW_API_URL ||
-    "http://localhost:8000";
-  const apiKey = request.headers.get("X-OpenClaw-Key") || "";
-
-  return {
-    baseUrl: apiUrl.replace(/\/+$/, ""),
-    apiKey,
-  };
-}
-
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
-  const { baseUrl, apiKey } = getOpenClawConfig(request);
+  const { id: rawId } = await params;
+  const safeId = sanitizePathParam(rawId);
+  if (!safeId) {
+    return NextResponse.json({ error: "Invalid conversation ID" }, { status: 400 });
+  }
+
+  const result = getOpenClawConfig(request);
+  if (result.error) return result.error;
+  const { baseUrl, apiKey } = result.config;
 
   if (!apiKey) {
     return NextResponse.json(
@@ -58,17 +53,13 @@ export async function GET(
     );
   }
 
-  const headers: Record<string, string> = {
-    Accept: "application/json",
-    Authorization: `Bearer ${apiKey}`,
-    "X-API-Key": apiKey,
-  };
+  const headers = buildAuthHeaders(apiKey);
 
   // Try multiple endpoint patterns
   const endpointsToTry = [
-    `/api/v1/conversations/${id}`,
-    `/api/conversations/${id}`,
-    `/conversations/${id}`,
+    `/api/v1/conversations/${safeId}`,
+    `/api/conversations/${safeId}`,
+    `/conversations/${safeId}`,
   ];
 
   const controller = new AbortController();
@@ -127,38 +118,12 @@ export async function GET(
 
     clearTimeout(timeoutId);
     return NextResponse.json(
-      { error: `Conversation '${id}' not found.` },
+      { error: "Conversation not found." },
       { status: 404 }
     );
   } catch (error: unknown) {
     clearTimeout(timeoutId);
-    const message = error instanceof Error ? error.message : "Unknown error";
-
-    if (message.includes("abort")) {
-      return NextResponse.json(
-        { error: "Request to OpenClaw API timed out" },
-        { status: 504 }
-      );
-    }
-
-    if (message.includes("ECONNREFUSED")) {
-      return NextResponse.json(
-        { error: `Cannot reach OpenClaw at ${baseUrl}. Is the server running?` },
-        { status: 502 }
-      );
-    }
-
-    if (message.includes("ENOTFOUND")) {
-      return NextResponse.json(
-        { error: "Cannot resolve OpenClaw hostname. Check the API URL in Settings." },
-        { status: 502 }
-      );
-    }
-
-    return NextResponse.json(
-      { error: `Failed to fetch conversation: ${message}` },
-      { status: 500 }
-    );
+    return proxyErrorResponse(error, "Failed to fetch conversation");
   }
 }
 

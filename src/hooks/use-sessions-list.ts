@@ -26,6 +26,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { formatRelativeTime, toNumber } from "@/lib/utils";
 import type { GatewayResponse } from "@/lib/gateway-types";
 import type { ActiveSessionsData } from "@/components/monitoring/monitoring-dashboard";
 
@@ -329,46 +330,6 @@ function parseSessionStatus(
   if (normalized === "completing" || normalized === "finishing") return "completing";
   if (normalized === "error" || normalized === "failed") return "error";
   return "active";
-}
-
-function toNumber(val: unknown, fallback: number): number {
-  if (typeof val === "number" && !isNaN(val)) return val;
-  if (typeof val === "string") {
-    const n = parseFloat(val);
-    if (!isNaN(n)) return n;
-  }
-  return fallback;
-}
-
-/**
- * Format an ISO timestamp into a human-friendly relative time string.
- * Falls back to the raw string if parsing fails.
- */
-function formatRelativeTime(isoString: string): string {
-  if (!isoString) return "";
-
-  try {
-    const date = new Date(isoString);
-    if (isNaN(date.getTime())) return isoString;
-
-    const now = Date.now();
-    const diffMs = now - date.getTime();
-    if (diffMs < 0) return "just now";
-
-    const diffSec = Math.floor(diffMs / 1000);
-    if (diffSec < 60) return "just now";
-
-    const diffMin = Math.floor(diffSec / 60);
-    if (diffMin < 60) return `${diffMin}m ago`;
-
-    const diffHours = Math.floor(diffMin / 60);
-    if (diffHours < 24) return `${diffHours}h ago`;
-
-    const diffDays = Math.floor(diffHours / 24);
-    return `${diffDays}d ago`;
-  } catch {
-    return isoString;
-  }
 }
 
 // ---------------------------------------------------------------------------

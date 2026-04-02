@@ -27,8 +27,13 @@ export function useSubAgents(
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
 
+  const initialLoadDoneRef = useRef(false);
+
   const fetchAgents = useCallback(async () => {
-    setLoading(true);
+    // Only show loading on initial fetch, not polling
+    if (!initialLoadDoneRef.current) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const response = await openclawFetch(
@@ -41,6 +46,7 @@ export function useSubAgents(
       if (mountedRef.current) {
         setAgents(data.agents ?? []);
         setTotal(data.total ?? 0);
+        initialLoadDoneRef.current = true;
       }
     } catch (err) {
       if (mountedRef.current) {

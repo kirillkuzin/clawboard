@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { getOpenClawConfig, buildAuthHeaders, getCorsOrigin } from "@/lib/api-config";
 
 /**
  * GET /api/sse
@@ -40,25 +41,13 @@ const KEEPALIVE_INTERVAL_MS = 30_000;
 const RETRY_MS = 5_000;
 
 export async function GET(request: NextRequest) {
-  const apiUrl = request.headers.get("x-openclaw-url") ||
-    request.nextUrl.searchParams.get("apiUrl") ||
-    process.env.OPENCLAW_API_URL ||
-    "http://localhost:8000";
+  // Get config from headers only (not query params — avoids leaking API key in URLs)
+  const result = getOpenClawConfig(request);
+  if (result.error) return sseErrorResponse("Invalid API URL format", 400);
 
-  const apiKey = request.headers.get("x-openclaw-key") ||
-    request.nextUrl.searchParams.get("apiKey") ||
-    "";
+  const { baseUrl, apiKey } = result.config;
 
   const requestedEndpoint = request.nextUrl.searchParams.get("endpoint");
-
-  // Normalize base URL
-  let baseUrl: string;
-  try {
-    const parsed = new URL(apiUrl);
-    baseUrl = parsed.origin + parsed.pathname.replace(/\/+$/, "");
-  } catch {
-    return sseErrorResponse("Invalid API URL format", 400);
-  }
 
   // Build list of endpoints to try
   const endpointsToTry = requestedEndpoint
@@ -66,15 +55,9 @@ export async function GET(request: NextRequest) {
     : SSE_ENDPOINTS;
 
   // Build auth headers for the upstream request
-  const upstreamHeaders: Record<string, string> = {
-    Accept: "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-  };
-  if (apiKey) {
-    upstreamHeaders["Authorization"] = `Bearer ${apiKey}`;
-    upstreamHeaders["X-API-Key"] = apiKey;
-  }
+  const upstreamHeaders = buildAuthHeaders(apiKey, "text/event-stream");
+  upstreamHeaders["Cache-Control"] = "no-cache";
+  upstreamHeaders["Connection"] = "keep-alive";
 
   // Try to connect to the backend SSE endpoint
   let upstreamResponse: Response | null = null;
@@ -125,12 +108,12 @@ export async function GET(request: NextRequest) {
       clearTimeout(timeoutId);
       const msg = err instanceof Error ? err.message : "Unknown error";
 
-      if (msg.includes("abort")) {
+      if (err instanceof Error && err.name === "AbortError") {
         lastError = "Connection timed out";
         break;
       }
       if (msg.includes("ECONNREFUSED") || msg.includes("ENOTFOUND") || msg.includes("fetch failed")) {
-        lastError = `Cannot reach ${baseUrl}: ${msg}`;
+        lastError = `Cannot reach server: ${msg}`;
         break;
       }
       lastError = `${endpoint}: ${msg}`;
@@ -139,7 +122,7 @@ export async function GET(request: NextRequest) {
 
   if (!upstreamResponse || !upstreamResponse.body) {
     return sseErrorResponse(
-      `Could not establish SSE connection to ${baseUrl}. ${lastError}`,
+      `Could not establish SSE connection. ${lastError}`,
       502
     );
   }
@@ -148,6 +131,9 @@ export async function GET(request: NextRequest) {
   const encoder = new TextEncoder();
   const upstreamBody = upstreamResponse.body;
 
+  // Buffer for handling SSE events that span chunk boundaries
+  let sseBuffer = "";
+
   const stream = new ReadableStream({
     async start(controller) {
       // Send initial connection event
@@ -155,7 +141,6 @@ export async function GET(request: NextRequest) {
         encoder.encode(
           formatSSE("connected", {
             endpoint: connectedEndpoint,
-            apiUrl: baseUrl,
             timestamp: new Date().toISOString(),
           })
         )
@@ -182,7 +167,10 @@ export async function GET(request: NextRequest) {
           const { done, value } = await reader.read();
 
           if (done) {
-            // Upstream closed the connection
+            // Flush any remaining buffer
+            if (sseBuffer.trim()) {
+              controller.enqueue(encoder.encode(processBufferedData(sseBuffer)));
+            }
             controller.enqueue(
               encoder.encode(
                 formatSSE("disconnected", {
@@ -194,30 +182,24 @@ export async function GET(request: NextRequest) {
             break;
           }
 
-          // Forward the raw SSE data from upstream
           const chunk = decoder.decode(value, { stream: true });
+          sseBuffer += chunk;
 
-          // If upstream sends standard SSE format, forward as-is
-          // If it sends raw JSON lines, wrap them as SSE events
-          if (isSSEFormat(chunk)) {
-            controller.enqueue(encoder.encode(chunk));
-          } else {
-            // Wrap non-SSE data as SSE events
-            const lines = chunk.split("\n").filter((l) => l.trim());
-            for (const line of lines) {
-              try {
-                // Try to parse as JSON to extract event type
-                const parsed = JSON.parse(line);
-                const eventType = parsed.type || parsed.event || "message";
-                controller.enqueue(
-                  encoder.encode(formatSSE(eventType, parsed))
-                );
-              } catch {
-                // Not JSON, send as raw data
-                controller.enqueue(
-                  encoder.encode(`data: ${line}\n\n`)
-                );
-              }
+          // Process complete SSE events (delimited by double newline)
+          const events = sseBuffer.split("\n\n");
+          // Keep the last (possibly incomplete) part in the buffer
+          sseBuffer = events.pop() || "";
+
+          for (const event of events) {
+            const trimmed = event.trim();
+            if (!trimmed) continue;
+
+            if (isSSEFormat(trimmed)) {
+              // Forward standard SSE events as-is
+              controller.enqueue(encoder.encode(trimmed + "\n\n"));
+            } else {
+              // Wrap non-SSE data as SSE events
+              controller.enqueue(encoder.encode(processBufferedData(trimmed)));
             }
           }
         }
@@ -260,6 +242,8 @@ export async function GET(request: NextRequest) {
     },
   });
 
+  const origin = getCorsOrigin(request);
+
   return new Response(stream, {
     status: 200,
     headers: {
@@ -267,9 +251,27 @@ export async function GET(request: NextRequest) {
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no", // Disable nginx buffering
-      "Access-Control-Allow-Origin": "*",
+      ...(origin ? { "Access-Control-Allow-Origin": origin } : {}),
     },
   });
+}
+
+/**
+ * Process a buffered chunk of non-SSE data into SSE format.
+ */
+function processBufferedData(data: string): string {
+  const lines = data.split("\n").filter((l) => l.trim());
+  let result = "";
+  for (const line of lines) {
+    try {
+      const parsed = JSON.parse(line);
+      const eventType = parsed.type || parsed.event || "message";
+      result += formatSSE(eventType, parsed);
+    } catch {
+      result += `data: ${line}\n\n`;
+    }
+  }
+  return result;
 }
 
 /**
@@ -284,13 +286,11 @@ function formatSSE(event: string, data: unknown): string {
  * Check if a chunk looks like standard SSE format (has "data:" or "event:" lines).
  */
 function isSSEFormat(chunk: string): boolean {
-  return /^(data:|event:|id:|retry:|:)/.test(chunk.trim());
+  return /^(data:|event:|id:|retry:|:)/m.test(chunk);
 }
 
 /**
  * Return an SSE-formatted error response.
- * The response itself is SSE so the browser's EventSource gets the error event
- * before the stream closes.
  */
 function sseErrorResponse(message: string, status: number): Response {
   const encoder = new TextEncoder();

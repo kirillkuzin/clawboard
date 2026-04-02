@@ -133,10 +133,16 @@ export function SettingsSection() {
     }
   }, [apiUrl, apiKey]);
 
+  // Settings auto-save on change via useSettings setters.
+  // This button provides explicit visual confirmation.
   const handleSave = useCallback(() => {
+    // Force re-persist current values (useSettings auto-saves, but this confirms)
+    setApiUrl(apiUrl);
+    setApiKey(apiKey);
+    setGatewayWsUrl(gatewayWsUrl);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
-  }, []);
+  }, [apiUrl, apiKey, gatewayWsUrl, setApiUrl, setApiKey, setGatewayWsUrl]);
 
   const handleReset = useCallback(() => {
     clearSettings();
@@ -243,8 +249,8 @@ export function SettingsSection() {
                   </button>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Your OpenClaw API key for authentication. Stored securely in
-                  browser localStorage.
+                  Your OpenClaw API key for authentication. Stored in
+                  browser localStorage (accessible to page scripts).
                 </p>
               </div>
 

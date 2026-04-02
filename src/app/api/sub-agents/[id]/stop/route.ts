@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getOpenClawConfig, buildAuthHeaders, sanitizePathParam, proxyErrorResponse } from "@/lib/api-config";
 
 /**
  * POST /api/sub-agents/[id]/stop
@@ -15,25 +16,19 @@ import { NextRequest, NextResponse } from "next/server";
  *   X-OpenClaw-Key: API key for authentication
  */
 
-function getOpenClawConfig(request: NextRequest) {
-  const apiUrl =
-    request.headers.get("X-OpenClaw-URL") ||
-    process.env.OPENCLAW_API_URL ||
-    "http://localhost:8000";
-  const apiKey = request.headers.get("X-OpenClaw-Key") || "";
-
-  return {
-    baseUrl: apiUrl.replace(/\/+$/, ""),
-    apiKey,
-  };
-}
-
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
-  const { baseUrl, apiKey } = getOpenClawConfig(request);
+  const { id: rawId } = await params;
+  const id = sanitizePathParam(rawId);
+  if (!id) {
+    return NextResponse.json({ error: "Invalid sub-agent ID" }, { status: 400 });
+  }
+
+  const result = getOpenClawConfig(request);
+  if (result.error) return result.error;
+  const { baseUrl, apiKey } = result.config;
 
   if (!apiKey) {
     return NextResponse.json(
@@ -65,12 +60,8 @@ export async function POST(
     // No body or invalid JSON — use defaults
   }
 
-  const headers: Record<string, string> = {
-    Accept: "application/json",
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${apiKey}`,
-    "X-API-Key": apiKey,
-  };
+  const headers = buildAuthHeaders(apiKey);
+  headers["Content-Type"] = "application/json";
 
   const requestBody = JSON.stringify({
     action,
@@ -206,23 +197,6 @@ export async function POST(
       );
     }
 
-    if (message.includes("ECONNREFUSED")) {
-      return NextResponse.json(
-        { error: `Cannot reach OpenClaw at ${baseUrl}. Is the server running?` },
-        { status: 502 }
-      );
-    }
-
-    if (message.includes("ENOTFOUND")) {
-      return NextResponse.json(
-        { error: "Cannot resolve OpenClaw hostname. Check the API URL in Settings." },
-        { status: 502 }
-      );
-    }
-
-    return NextResponse.json(
-      { error: `Failed to ${action} sub-agent: ${message}` },
-      { status: 500 }
-    );
+    return proxyErrorResponse(error, `Failed to ${action} sub-agent`);
   }
 }

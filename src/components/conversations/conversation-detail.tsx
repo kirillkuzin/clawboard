@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef } from "react";
-import { cn } from "@/lib/utils";
+import { cn, formatRelativeTime } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -45,24 +45,6 @@ function formatTimestamp(iso: string): string {
       minute: "2-digit",
       second: "2-digit",
     });
-  } catch {
-    return iso;
-  }
-}
-
-function formatRelativeTime(iso: string): string {
-  try {
-    const d = new Date(iso);
-    const now = new Date();
-    const diffMs = now.getTime() - d.getTime();
-    const diffSec = Math.floor(diffMs / 1000);
-    if (diffSec < 60) return `${diffSec}s ago`;
-    const diffMin = Math.floor(diffSec / 60);
-    if (diffMin < 60) return `${diffMin}m ago`;
-    const diffHr = Math.floor(diffMin / 60);
-    if (diffHr < 24) return `${diffHr}h ago`;
-    const diffDay = Math.floor(diffHr / 24);
-    return `${diffDay}d ago`;
   } catch {
     return iso;
   }

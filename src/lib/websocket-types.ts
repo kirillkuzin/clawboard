@@ -93,5 +93,5 @@ export const WS_DEFAULTS = {
   reconnectDelay: 1_000,
   maxReconnectDelay: 30_000,
   reconnectMultiplier: 1.5,
-  maxReconnectAttempts: Infinity,
+  maxReconnectAttempts: 20,
 } as const;

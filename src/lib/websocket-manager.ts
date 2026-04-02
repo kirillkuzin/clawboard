@@ -18,24 +18,28 @@ import {
   WS_DEFAULTS,
 } from "./websocket-types";
 
+/** Allowed protocols for WebSocket URLs */
+const ALLOWED_WS_PROTOCOLS = new Set(["ws:", "wss:", "http:", "https:"]);
+
 /**
  * Convert an HTTP(S) URL to a WebSocket URL.
  * e.g., http://localhost:8000 -> ws://localhost:8000
  *       https://api.example.com -> wss://api.example.com
+ *
+ * Validates the protocol to prevent javascript:, file:, etc.
  */
 function toWsUrl(httpUrl: string, path: string): string {
-  try {
-    const url = new URL(httpUrl);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    // Ensure path doesn't double-slash
-    const basePath = url.pathname.replace(/\/$/, "");
-    url.pathname = `${basePath}${path}`;
-    return url.toString();
-  } catch {
-    // Fallback: simple string replacement
-    const wsUrl = httpUrl.replace(/^http/, "ws").replace(/\/$/, "");
-    return `${wsUrl}${path}`;
+  const url = new URL(httpUrl);
+
+  if (!ALLOWED_WS_PROTOCOLS.has(url.protocol)) {
+    throw new Error(`Unsupported protocol: ${url.protocol}. Only ws, wss, http, and https are allowed.`);
   }
+
+  url.protocol = url.protocol === "https:" || url.protocol === "wss:" ? "wss:" : "ws:";
+  // Ensure path doesn't double-slash
+  const basePath = url.pathname.replace(/\/$/, "");
+  url.pathname = `${basePath}${path}`;
+  return url.toString();
 }
 
 export class WebSocketManager {

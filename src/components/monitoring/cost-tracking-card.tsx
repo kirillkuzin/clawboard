@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo } from "react";
-import { cn } from "@/lib/utils";
+import { cn, formatRelativeTime } from "@/lib/utils";
 import { DollarSign, RefreshCw, AlertCircle, TrendingUp, TrendingDown, ShieldAlert } from "lucide-react";
 import {
   Card,
@@ -55,16 +55,6 @@ function formatCurrency(amount: number | undefined, currency = "USD"): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 4,
   }).format(amount);
-}
-
-function formatRelativeTime(isoString: string): string {
-  const now = Date.now();
-  const then = new Date(isoString).getTime();
-  const diffMs = now - then;
-  if (diffMs < 60_000) return "just now";
-  if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)}m ago`;
-  if (diffMs < 86_400_000) return `${Math.floor(diffMs / 3_600_000)}h ago`;
-  return `${Math.floor(diffMs / 86_400_000)}d ago`;
 }
 
 // ---------------------------------------------------------------------------

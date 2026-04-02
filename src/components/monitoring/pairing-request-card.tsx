@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { cn } from "@/lib/utils";
+import { cn, formatRelativeTime } from "@/lib/utils";
 import {
   Fingerprint,
   Monitor,
@@ -56,29 +56,6 @@ export interface PairingRequestCardProps {
 function formatFingerprint(fingerprint: string): string {
   if (fingerprint.length <= 20) return fingerprint;
   return `${fingerprint.slice(0, 8)}…${fingerprint.slice(-8)}`;
-}
-
-/**
- * Formats a relative time string from an ISO timestamp.
- */
-function formatRelativeTime(isoString: string): string {
-  const now = Date.now();
-  const then = new Date(isoString).getTime();
-  if (isNaN(then)) return "unknown";
-  const diffMs = now - then;
-
-  if (diffMs < 0) return "just now";
-  if (diffMs < 60_000) return "just now";
-  if (diffMs < 3_600_000) {
-    const mins = Math.floor(diffMs / 60_000);
-    return `${mins}m ago`;
-  }
-  if (diffMs < 86_400_000) {
-    const hours = Math.floor(diffMs / 3_600_000);
-    return `${hours}h ago`;
-  }
-  const days = Math.floor(diffMs / 86_400_000);
-  return `${days}d ago`;
 }
 
 /**

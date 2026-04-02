@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getOpenClawConfig, buildAuthHeaders, proxyErrorResponse } from "@/lib/api-config";
 
 /**
  * GET /api/sub-agents
@@ -48,21 +49,10 @@ export interface SubAgentsResponse {
   offset: number;
 }
 
-function getOpenClawConfig(request: NextRequest) {
-  const apiUrl =
-    request.headers.get("X-OpenClaw-URL") ||
-    process.env.OPENCLAW_API_URL ||
-    "http://localhost:8000";
-  const apiKey = request.headers.get("X-OpenClaw-Key") || "";
-
-  return {
-    baseUrl: apiUrl.replace(/\/+$/, ""),
-    apiKey,
-  };
-}
-
 export async function GET(request: NextRequest) {
-  const { baseUrl, apiKey } = getOpenClawConfig(request);
+  const result = getOpenClawConfig(request);
+  if (result.error) return result.error;
+  const { baseUrl, apiKey } = result.config;
 
   if (!apiKey) {
     return NextResponse.json(
@@ -83,11 +73,7 @@ export async function GET(request: NextRequest) {
   if (status) params.set("status", status);
   if (parentId) params.set("parent_id", parentId);
 
-  const headers: Record<string, string> = {
-    Accept: "application/json",
-    Authorization: `Bearer ${apiKey}`,
-    "X-API-Key": apiKey,
-  };
+  const headers = buildAuthHeaders(apiKey);
 
   // Try multiple sub-agent endpoint patterns for OpenClaw compatibility
   const endpointsToTry = [
@@ -174,24 +160,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    if (message.includes("ECONNREFUSED")) {
-      return NextResponse.json(
-        { error: `Cannot reach OpenClaw at ${baseUrl}. Is the server running?` },
-        { status: 502 }
-      );
-    }
-
-    if (message.includes("ENOTFOUND")) {
-      return NextResponse.json(
-        { error: "Cannot resolve OpenClaw hostname. Check the API URL in Settings." },
-        { status: 502 }
-      );
-    }
-
-    return NextResponse.json(
-      { error: `Failed to fetch sub-agents: ${message}` },
-      { status: 500 }
-    );
+    return proxyErrorResponse(error, "Failed to fetch sub-agents");
   }
 }
 

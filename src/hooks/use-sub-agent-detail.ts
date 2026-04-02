@@ -47,10 +47,13 @@ export function useSubAgentDetail(
   const [killing, setKilling] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
+  const initialLoadDoneRef = useRef(false);
 
-  const fetchDetail = useCallback(async () => {
+  const fetchDetail = useCallback(async (isPolling = false) => {
     if (!agentId) return;
-    setLoading(true);
+    if (!isPolling) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const response = await openclawFetch(`/agents/${agentId}`);
@@ -62,6 +65,7 @@ export function useSubAgentDetail(
       const data = await response.json();
       if (mountedRef.current) {
         setAgent(data as SubAgentDetailData);
+        initialLoadDoneRef.current = true;
       }
     } catch (err) {
       if (mountedRef.current) {
@@ -70,7 +74,7 @@ export function useSubAgentDetail(
         setError(msg);
       }
     } finally {
-      if (mountedRef.current) {
+      if (mountedRef.current && !isPolling) {
         setLoading(false);
       }
     }
@@ -136,8 +140,9 @@ export function useSubAgentDetail(
 
   useEffect(() => {
     mountedRef.current = true;
+    initialLoadDoneRef.current = false;
     if (agentId) {
-      fetchDetail();
+      fetchDetail(false);
     } else {
       setAgent(null);
       setError(null);
@@ -158,7 +163,7 @@ export function useSubAgentDetail(
     const isActive =
       agent?.status === "running" || agent?.status === "waiting";
     if (agentId && isActive) {
-      pollingRef.current = setInterval(fetchDetail, 5000);
+      pollingRef.current = setInterval(() => fetchDetail(true), 5000);
     }
 
     return () => {
@@ -173,7 +178,7 @@ export function useSubAgentDetail(
     agent,
     loading,
     error,
-    refresh: fetchDetail,
+    refresh: () => fetchDetail(false),
     stopAgent,
     killAgent,
     stopping,

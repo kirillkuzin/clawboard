@@ -1,4 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  getOpenClawConfig,
+  filterResponseHeaders,
+  getCorsOrigin,
+} from "@/lib/api-config";
 
 /**
  * Generic proxy route for OpenClaw API requests.
@@ -10,19 +15,6 @@ import { NextRequest, NextResponse } from "next/server";
  *
  * Falls back to OPENCLAW_API_URL env var if no URL header is provided.
  */
-
-function getOpenClawConfig(request: NextRequest) {
-  const apiUrl =
-    request.headers.get("X-OpenClaw-URL") ||
-    process.env.OPENCLAW_API_URL ||
-    "http://localhost:8000";
-  const apiKey = request.headers.get("X-OpenClaw-Key") || "";
-
-  // Normalize - remove trailing slash
-  const baseUrl = apiUrl.replace(/\/+$/, "");
-
-  return { baseUrl, apiKey };
-}
 
 function buildHeaders(apiKey: string, request: NextRequest): Record<string, string> {
   const headers: Record<string, string> = {
@@ -47,7 +39,21 @@ async function proxyRequest(
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   const { path } = await params;
-  const { baseUrl, apiKey } = getOpenClawConfig(request);
+  const result = getOpenClawConfig(request);
+  if (result.error) return result.error;
+
+  const { baseUrl, apiKey } = result.config;
+
+  // Validate path segments (no traversal)
+  for (const segment of path) {
+    if (segment === ".." || segment === ".") {
+      return NextResponse.json(
+        { error: "Invalid path" },
+        { status: 400 }
+      );
+    }
+  }
+
   const targetPath = "/" + path.join("/");
 
   // Forward query parameters
@@ -82,21 +88,17 @@ async function proxyRequest(
     const response = await fetch(targetUrl, fetchOptions);
     clearTimeout(timeoutId);
 
-    // Stream the response back
-    const responseHeaders = new Headers();
-    response.headers.forEach((value, key) => {
-      // Skip hop-by-hop headers
-      if (!["transfer-encoding", "connection", "keep-alive"].includes(key.toLowerCase())) {
-        responseHeaders.set(key, value);
-      }
-    });
+    // Filter response headers using allowlist
+    const responseHeaders = filterResponseHeaders(response.headers);
 
-    // Allow CORS from the dashboard
-    responseHeaders.set("Access-Control-Allow-Origin", "*");
+    // Set CORS to requesting origin (not wildcard)
+    const origin = getCorsOrigin(request);
+    if (origin) {
+      responseHeaders.set("Access-Control-Allow-Origin", origin);
+    }
 
-    const responseBody = await response.arrayBuffer();
-
-    return new NextResponse(responseBody, {
+    // Stream the response back instead of buffering
+    return new NextResponse(response.body, {
       status: response.status,
       statusText: response.statusText,
       headers: responseHeaders,
@@ -105,7 +107,7 @@ async function proxyRequest(
     clearTimeout(timeoutId);
     const message = error instanceof Error ? error.message : "Unknown error";
 
-    if (message.includes("abort")) {
+    if (error instanceof Error && error.name === "AbortError") {
       return NextResponse.json(
         { error: "Request to OpenClaw API timed out after 30 seconds" },
         { status: 504 }
@@ -114,7 +116,7 @@ async function proxyRequest(
 
     if (message.includes("ECONNREFUSED")) {
       return NextResponse.json(
-        { error: `Cannot reach OpenClaw API at ${baseUrl}. Is the server running?` },
+        { error: "Cannot reach OpenClaw API. Is the server running?" },
         { status: 502 }
       );
     }

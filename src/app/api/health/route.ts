@@ -8,6 +8,9 @@ import { NextRequest, NextResponse } from "next/server";
  *
  * Body: { apiUrl: string, apiKey: string }
  */
+
+const ALLOWED_PROTOCOLS = ["http:", "https:"];
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -28,6 +31,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { ok: false, error: "Invalid API URL format. Please enter a valid URL (e.g., http://localhost:8000)." },
         { status: 400 }
+      );
+    }
+
+    // Validate protocol
+    if (!ALLOWED_PROTOCOLS.includes(parsedUrl.protocol)) {
+      return NextResponse.json(
+        { ok: false, error: `Unsupported protocol: ${parsedUrl.protocol}. Only http and https are allowed.` },
+        { status: 400 }
+      );
+    }
+
+    // Block internal metadata endpoints
+    const hostname = parsedUrl.hostname;
+    if (
+      hostname === "169.254.169.254" ||
+      hostname === "metadata.google.internal"
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "Access to internal metadata services is not allowed" },
+        { status: 403 }
       );
     }
 
@@ -81,7 +104,7 @@ export async function POST(request: NextRequest) {
 
           return NextResponse.json({
             ok: true,
-            message: `Connected to OpenClaw at ${baseUrl}`,
+            message: `Connected to OpenClaw`,
             latencyMs,
             endpoint,
             serverInfo,
@@ -103,9 +126,9 @@ export async function POST(request: NextRequest) {
         const errorMessage =
           fetchError instanceof Error ? fetchError.message : "Unknown error";
 
-        if (errorMessage.includes("abort")) {
+        if (fetchError instanceof Error && fetchError.name === "AbortError") {
           lastError = "Connection timed out after 10 seconds";
-          break; // Don't try more endpoints if we're timing out
+          break;
         }
 
         lastError = errorMessage;
@@ -129,7 +152,7 @@ export async function POST(request: NextRequest) {
     if (lastError.includes("ECONNREFUSED")) {
       return NextResponse.json({
         ok: false,
-        error: `Cannot reach ${baseUrl}. Is the OpenClaw server running?`,
+        error: "Cannot reach the server. Is the OpenClaw server running?",
         latencyMs,
       });
     }
@@ -137,7 +160,7 @@ export async function POST(request: NextRequest) {
     if (lastError.includes("ENOTFOUND")) {
       return NextResponse.json({
         ok: false,
-        error: `Cannot resolve hostname. Please check the API URL.`,
+        error: "Cannot resolve hostname. Please check the API URL.",
         latencyMs,
       });
     }
@@ -145,7 +168,7 @@ export async function POST(request: NextRequest) {
     if (lastError.includes("timed out")) {
       return NextResponse.json({
         ok: false,
-        error: `Connection timed out after 10 seconds. The server may be unreachable.`,
+        error: "Connection timed out after 10 seconds. The server may be unreachable.",
         latencyMs,
       });
     }
@@ -153,14 +176,14 @@ export async function POST(request: NextRequest) {
     if (lastError.includes("fetch failed")) {
       return NextResponse.json({
         ok: false,
-        error: `Cannot reach ${baseUrl}. Is the OpenClaw server running and accessible?`,
+        error: "Cannot reach the server. Is the OpenClaw server running and accessible?",
         latencyMs,
       });
     }
 
     return NextResponse.json({
       ok: false,
-      error: `Could not connect to OpenClaw at ${baseUrl}. ${lastError}`,
+      error: `Could not connect to OpenClaw. ${lastError}`,
       latencyMs,
     });
   } catch {

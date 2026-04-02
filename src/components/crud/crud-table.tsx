@@ -197,7 +197,7 @@ export function CrudTable<T extends { id: string }>({
                           size="icon"
                           onClick={() => onEdit(item)}
                           className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                          title="Edit"
+                          aria-label="Edit"
                         >
                           <Pencil size={14} />
                         </Button>
@@ -229,7 +229,7 @@ export function CrudTable<T extends { id: string }>({
                             size="icon"
                             onClick={() => setDeleteConfirm(item.id)}
                             className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                            title="Delete"
+                            aria-label="Delete"
                           >
                             <Trash2 size={14} />
                           </Button>

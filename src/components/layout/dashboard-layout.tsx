@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { Sidebar, NAV_ITEMS } from "./sidebar";
 import { SidebarProvider } from "./sidebar-provider";
 import { RealtimeProvider } from "@/components/providers/realtime-provider";
+import { GatewayProvider } from "@/components/providers/gateway-provider";
 import { useSidebar } from "@/hooks/use-sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ConversationList } from "@/components/conversations/conversation-list";
@@ -255,9 +256,11 @@ function PageContent({ activeSection }: { activeSection: string }) {
 export function DashboardLayout({ children }: { children?: React.ReactNode }) {
   return (
     <SidebarProvider>
-      <RealtimeProvider>
-        <DashboardInner>{children}</DashboardInner>
-      </RealtimeProvider>
+      <GatewayProvider>
+        <RealtimeProvider>
+          <DashboardInner>{children}</DashboardInner>
+        </RealtimeProvider>
+      </GatewayProvider>
     </SidebarProvider>
   );
 }

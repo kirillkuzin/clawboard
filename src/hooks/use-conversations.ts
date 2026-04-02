@@ -34,6 +34,7 @@ export function useConversations(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
+  const mountedRef = useRef(true);
 
   const fetchConversations = useCallback(async () => {
     setLoading(true);
@@ -46,19 +47,30 @@ export function useConversations(
         throw new Error(`API error: ${response.status} ${response.statusText}`);
       }
       const data: ConversationListResponse = await response.json();
-      setConversations(data.conversations ?? []);
-      setTotal(data.total ?? 0);
+      if (mountedRef.current) {
+        setConversations(data.conversations ?? []);
+        setTotal(data.total ?? 0);
+      }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to fetch conversations";
-      setError(msg);
-      setConversations([]);
+      if (mountedRef.current) {
+        const msg = err instanceof Error ? err.message : "Failed to fetch conversations";
+        setError(msg);
+        setConversations([]);
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
   }, [page, pageSize]);
 
   useEffect(() => {
+    mountedRef.current = true;
     fetchConversations();
+
+    return () => {
+      mountedRef.current = false;
+    };
   }, [fetchConversations]);
 
   return { conversations, loading, error, total, refresh: fetchConversations };
@@ -75,13 +87,18 @@ export function useConversationDetail(
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mountedRef = useRef(true);
+  const initialLoadDoneRef = useRef(false);
 
-  const fetchDetail = useCallback(async () => {
+  const fetchDetail = useCallback(async (isPolling = false) => {
     if (!conversationId) {
       setConversation(null);
       return;
     }
-    setLoading(true);
+    // Only show loading spinner on initial fetch, not polling refreshes
+    if (!isPolling) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const response = await openclawFetch(`/conversations/${conversationId}`);
@@ -89,25 +106,35 @@ export function useConversationDetail(
         throw new Error(`API error: ${response.status} ${response.statusText}`);
       }
       const data: ConversationDetailResponse = await response.json();
-      setConversation(data);
+      if (mountedRef.current) {
+        setConversation(data);
+        initialLoadDoneRef.current = true;
+      }
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : "Failed to fetch conversation";
-      setError(msg);
+      if (mountedRef.current) {
+        const msg =
+          err instanceof Error ? err.message : "Failed to fetch conversation";
+        setError(msg);
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current && !isPolling) {
+        setLoading(false);
+      }
     }
   }, [conversationId]);
 
   useEffect(() => {
-    fetchDetail();
+    mountedRef.current = true;
+    initialLoadDoneRef.current = false;
+    fetchDetail(false);
 
     // Poll for updates on active conversations
     if (conversationId) {
-      pollingRef.current = setInterval(fetchDetail, 5000);
+      pollingRef.current = setInterval(() => fetchDetail(true), 5000);
     }
 
     return () => {
+      mountedRef.current = false;
       if (pollingRef.current) {
         clearInterval(pollingRef.current);
         pollingRef.current = null;
@@ -115,5 +142,10 @@ export function useConversationDetail(
     };
   }, [fetchDetail, conversationId]);
 
-  return { conversation, loading, error, refresh: fetchDetail };
+  return {
+    conversation,
+    loading,
+    error,
+    refresh: () => fetchDetail(false),
+  };
 }

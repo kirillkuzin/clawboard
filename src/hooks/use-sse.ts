@@ -23,7 +23,7 @@ export interface UseSSEOptions {
   onEvent?: (event: SSEEvent) => void;
   /** Callback on connection status change */
   onStatusChange?: (status: SSEStatus) => void;
-  /** Maximum reconnection attempts before giving up (default: Infinity) */
+  /** Maximum reconnection attempts before giving up (default: 20) */
   maxRetries?: number;
 }
 
@@ -42,9 +42,13 @@ export interface UseSSEReturn {
   retryCount: number;
 }
 
+/** Default reconnect delay in ms */
+const RECONNECT_DELAY_MS = 5_000;
+
 /**
  * React hook for consuming the SSE relay endpoint.
- * Manages EventSource lifecycle, reconnection, and event dispatching.
+ * Uses fetch-based SSE to support sending credentials via headers
+ * instead of query parameters.
  */
 export function useSSE(options: UseSSEOptions): UseSSEReturn {
   const {
@@ -54,7 +58,7 @@ export function useSSE(options: UseSSEOptions): UseSSEReturn {
     endpoint,
     onEvent,
     onStatusChange,
-    maxRetries = Infinity,
+    maxRetries = 20,
   } = options;
 
   const [status, setStatus] = useState<SSEStatus>("disconnected");
@@ -62,9 +66,10 @@ export function useSSE(options: UseSSEOptions): UseSSEReturn {
   const [lastEvent, setLastEvent] = useState<SSEEvent | null>(null);
   const [retryCount, setRetryCount] = useState(0);
 
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const retryCountRef = useRef(0);
   const manualDisconnectRef = useRef(false);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onEventRef = useRef(onEvent);
   const onStatusChangeRef = useRef(onStatusChange);
 
@@ -81,11 +86,20 @@ export function useSSE(options: UseSSEOptions): UseSSEReturn {
     onStatusChangeRef.current?.(newStatus);
   }, []);
 
+  const dispatchEvent = useCallback((event: SSEEvent) => {
+    setLastEvent(event);
+    onEventRef.current?.(event);
+  }, []);
+
   const disconnect = useCallback(() => {
     manualDisconnectRef.current = true;
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
     }
     updateStatus("disconnected");
     setRetryCount(0);
@@ -94,9 +108,13 @@ export function useSSE(options: UseSSEOptions): UseSSEReturn {
 
   const connect = useCallback(() => {
     // Clean up existing connection
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
     }
 
     if (!apiUrl) {
@@ -109,142 +127,154 @@ export function useSSE(options: UseSSEOptions): UseSSEReturn {
     setError(null);
     updateStatus("connecting");
 
-    // Build the SSE URL with query params (EventSource doesn't support custom headers)
+    // Build the SSE URL - only non-sensitive params
     const params = new URLSearchParams();
-    params.set("apiUrl", apiUrl);
-    if (apiKey) params.set("apiKey", apiKey);
     if (endpoint) params.set("endpoint", endpoint);
+    const sseUrl = `/api/sse${params.toString() ? `?${params.toString()}` : ""}`;
 
-    const sseUrl = `/api/sse?${params.toString()}`;
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-    const es = new EventSource(sseUrl);
-    eventSourceRef.current = es;
-
-    // Handle connection established
-    es.addEventListener("connected", (e: MessageEvent) => {
-      retryCountRef.current = 0;
-      setRetryCount(0);
-      setError(null);
-      updateStatus("connected");
-
-      try {
-        const data = JSON.parse(e.data);
-        const event: SSEEvent = {
-          type: "connected",
-          data,
-          timestamp: data.timestamp || new Date().toISOString(),
-        };
-        setLastEvent(event);
-        onEventRef.current?.(event);
-      } catch {
-        // Ignore parse errors for connection event
-      }
-    });
-
-    // Handle disconnected event from relay
-    es.addEventListener("disconnected", (e: MessageEvent) => {
-      updateStatus("disconnected");
-      try {
-        const data = JSON.parse(e.data);
-        setError(`Disconnected: ${data.reason || "unknown"}`);
-      } catch {
-        setError("Disconnected from server");
-      }
-    });
-
-    // Handle error events from the relay
-    es.addEventListener("error", (e: Event) => {
-      // Check if it's a MessageEvent (relay error) or a plain Event (connection error)
-      if (e instanceof MessageEvent) {
-        try {
-          const data = JSON.parse(e.data);
-          setError(data.message || "Unknown error");
-          const event: SSEEvent = {
-            type: "error",
-            data,
-            timestamp: data.timestamp || new Date().toISOString(),
-          };
-          setLastEvent(event);
-          onEventRef.current?.(event);
-        } catch {
-          setError("Stream error");
+    // Use fetch with headers for auth (not query params)
+    fetch(sseUrl, {
+      method: "GET",
+      headers: {
+        "Accept": "text/event-stream",
+        "X-OpenClaw-URL": apiUrl,
+        "X-OpenClaw-Key": apiKey || "",
+        "Cache-Control": "no-cache",
+      },
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok || !response.body) {
+          throw new Error(`SSE connection failed: HTTP ${response.status}`);
         }
-      }
 
-      // EventSource built-in error handling
-      if (es.readyState === EventSource.CLOSED) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+
+          if (done) {
+            if (!manualDisconnectRef.current) {
+              scheduleReconnect();
+            }
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+
+          // Process complete SSE events (delimited by double newline)
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+
+          for (const part of parts) {
+            const trimmed = part.trim();
+            if (!trimmed) continue;
+
+            // Parse SSE fields
+            let eventType = "message";
+            let data = "";
+
+            for (const line of trimmed.split("\n")) {
+              if (line.startsWith("event: ")) {
+                eventType = line.slice(7).trim();
+              } else if (line.startsWith("data: ")) {
+                data = line.slice(6);
+              } else if (line.startsWith(":")) {
+                // Comment (keep-alive), skip
+                continue;
+              }
+            }
+
+            if (!data) continue;
+
+            // Handle special event types
+            if (eventType === "connected") {
+              retryCountRef.current = 0;
+              setRetryCount(0);
+              setError(null);
+              updateStatus("connected");
+            } else if (eventType === "disconnected") {
+              updateStatus("disconnected");
+            } else if (eventType === "error") {
+              try {
+                const parsed = JSON.parse(data);
+                setError(parsed.message || "Unknown error");
+              } catch {
+                setError("Stream error");
+              }
+            }
+
+            try {
+              const parsed = JSON.parse(data);
+              dispatchEvent({
+                type: eventType,
+                data: parsed,
+                timestamp: parsed.timestamp || new Date().toISOString(),
+              });
+            } catch {
+              dispatchEvent({
+                type: eventType,
+                data,
+                timestamp: new Date().toISOString(),
+              });
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        if (err instanceof Error && err.name === "AbortError") return;
+
+        const msg = err instanceof Error ? err.message : "SSE connection error";
+        setError(msg);
         updateStatus("error");
 
-        if (!manualDisconnectRef.current && retryCountRef.current < maxRetries) {
-          retryCountRef.current += 1;
-          setRetryCount(retryCountRef.current);
-          // EventSource will auto-reconnect, but we track the attempt
-        }
-      }
-    });
-
-    // Handle generic message events (data without a named event)
-    es.addEventListener("message", (e: MessageEvent) => {
-      try {
-        const data = JSON.parse(e.data);
-        const event: SSEEvent = {
-          type: data.type || "message",
-          data,
-          timestamp: data.timestamp || new Date().toISOString(),
-        };
-        setLastEvent(event);
-        onEventRef.current?.(event);
-      } catch {
-        const event: SSEEvent = {
-          type: "message",
-          data: e.data,
-          timestamp: new Date().toISOString(),
-        };
-        setLastEvent(event);
-        onEventRef.current?.(event);
-      }
-    });
-
-    // Listen for common OpenClaw event types
-    const openclawEvents = [
-      "agent_status",
-      "agent_update",
-      "conversation_update",
-      "skill_execution",
-      "task_update",
-      "system_status",
-      "heartbeat",
-    ];
-
-    for (const eventType of openclawEvents) {
-      es.addEventListener(eventType, (e: MessageEvent) => {
-        try {
-          const data = JSON.parse(e.data);
-          const event: SSEEvent = {
-            type: eventType,
-            data,
-            timestamp: data.timestamp || new Date().toISOString(),
-          };
-          setLastEvent(event);
-          onEventRef.current?.(event);
-        } catch {
-          // Skip unparseable events
+        if (!manualDisconnectRef.current) {
+          scheduleReconnect();
         }
       });
-    }
-  }, [apiUrl, apiKey, endpoint, maxRetries, updateStatus]);
 
-  // Auto-connect when enabled and apiUrl changes
+    function scheduleReconnect() {
+      if (manualDisconnectRef.current) return;
+      if (retryCountRef.current >= maxRetries) {
+        setError("Max reconnection attempts reached");
+        updateStatus("error");
+        return;
+      }
+
+      retryCountRef.current += 1;
+      setRetryCount(retryCountRef.current);
+      updateStatus("disconnected");
+
+      reconnectTimerRef.current = setTimeout(() => {
+        reconnectTimerRef.current = null;
+        if (!manualDisconnectRef.current) {
+          connect();
+        }
+      }, RECONNECT_DELAY_MS);
+    }
+  }, [apiUrl, apiKey, endpoint, maxRetries, updateStatus, dispatchEvent]);
+
+  // Auto-connect when enabled
   useEffect(() => {
     if (enabled && apiUrl) {
       connect();
     }
 
     return () => {
-      if (eventSourceRef.current) {
-        manualDisconnectRef.current = true;
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
+      manualDisconnectRef.current = true;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
       }
     };
   }, [enabled, apiUrl, apiKey, connect]);

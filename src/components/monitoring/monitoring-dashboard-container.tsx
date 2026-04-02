@@ -26,14 +26,11 @@
 
 import React, { useState, useCallback } from "react";
 import { MonitoringDashboard } from "./monitoring-dashboard";
-import { useGatewayMonitor } from "@/hooks/use-gateway-monitor";
+import { useGateway } from "@/components/providers/gateway-provider";
 import type { TimeRange } from "./token-usage-analytics";
 
 export function MonitoringDashboardContainer() {
-  const gateway = useGatewayMonitor({
-    autoConnect: true,
-    pollIntervalMs: 30_000,
-  });
+  const gateway = useGateway();
 
   const [isTokenRefreshing, setIsTokenRefreshing] = useState(false);
 

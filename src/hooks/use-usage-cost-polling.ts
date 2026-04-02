@@ -24,6 +24,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { toNumber, toNumberOrNull } from "@/lib/utils";
 import type { GatewayResponse } from "@/lib/gateway-types";
 
 // ---------------------------------------------------------------------------
@@ -220,24 +221,6 @@ export function toLegacyCostTrackingData(
 // ---------------------------------------------------------------------------
 // Parse helpers
 // ---------------------------------------------------------------------------
-
-function toNumber(val: unknown, fallback: number): number {
-  if (typeof val === "number" && !isNaN(val)) return val;
-  if (typeof val === "string") {
-    const n = parseFloat(val);
-    if (!isNaN(n)) return n;
-  }
-  return fallback;
-}
-
-function toNumberOrNull(val: unknown): number | null {
-  if (typeof val === "number" && !isNaN(val)) return val;
-  if (typeof val === "string") {
-    const n = parseFloat(val);
-    if (!isNaN(n)) return n;
-  }
-  return null;
-}
 
 function parsePerModel(raw: unknown): CostModelBreakdown[] {
   if (!Array.isArray(raw)) return [];

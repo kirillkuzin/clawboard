@@ -1,360 +1,176 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
-import { useCrud } from "@/hooks/use-crud";
-import { Plugin, PluginFormData, PLUGIN_TYPES } from "@/lib/types";
-import { CrudTable, EnabledBadge, type Column } from "./crud-table";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog";
+import React, { useState } from "react";
+import { cn } from "@/lib/utils";
+import { useGatewayTools } from "@/hooks/use-gateway-tools";
+import { GatewayGuard } from "@/components/gateway-guard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Loader2 } from "lucide-react";
-
-const EMPTY_FORM: PluginFormData = {
-  name: "",
-  description: "",
-  version: "1.0.0",
-  enabled: true,
-  type: "custom",
-  entry_point: "",
-  config: {},
-  dependencies: [],
-  author: "",
-};
-
-const columns: Column<Plugin>[] = [
-  {
-    key: "name",
-    label: "Name",
-    render: (item) => (
-      <div className="flex flex-col">
-        <span className="font-medium text-foreground">{item.name}</span>
-        {item.version && (
-          <span className="text-xs text-muted-foreground">v{item.version}</span>
-        )}
-      </div>
-    ),
-  },
-  {
-    key: "type",
-    label: "Type",
-    render: (item) => (
-      <Badge variant="outline" className="capitalize">
-        {item.type || "custom"}
-      </Badge>
-    ),
-  },
-  {
-    key: "enabled",
-    label: "Status",
-    render: (item) => <EnabledBadge enabled={item.enabled} />,
-  },
-  {
-    key: "author",
-    label: "Author",
-    className: "hidden lg:table-cell",
-    render: (item) => (
-      <span className="text-muted-foreground text-xs">
-        {item.author || "—"}
-      </span>
-    ),
-  },
-  {
-    key: "description",
-    label: "Description",
-    className: "hidden md:table-cell max-w-[200px] truncate",
-    render: (item) => (
-      <span className="text-muted-foreground text-xs">
-        {item.description || "—"}
-      </span>
-    ),
-  },
-];
+import {
+  RefreshCw,
+  AlertCircle,
+  Search,
+  Puzzle,
+  Loader2,
+} from "lucide-react";
 
 export function PluginsSection() {
-  const crud = useCrud<Plugin>({ basePath: "/api/v1/plugins" });
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<PluginFormData>(EMPTY_FORM);
-  const [configText, setConfigText] = useState("{}");
-  const [configError, setConfigError] = useState<string | null>(null);
-  const [depsText, setDepsText] = useState("");
-  const [saving, setSaving] = useState(false);
+  return (
+    <GatewayGuard>
+      <PluginsSectionInner />
+    </GatewayGuard>
+  );
+}
 
-  const openAdd = useCallback(() => {
-    setEditingId(null);
-    setForm(EMPTY_FORM);
-    setConfigText("{}");
-    setDepsText("");
-    setConfigError(null);
-    setDialogOpen(true);
-  }, []);
+function PluginsSectionInner() {
+  const tools = useGatewayTools();
+  const [searchQuery, setSearchQuery] = useState("");
 
-  const openEdit = useCallback((plugin: Plugin) => {
-    setEditingId(plugin.id);
-    setForm({
-      name: plugin.name,
-      description: plugin.description || "",
-      version: plugin.version || "1.0.0",
-      enabled: plugin.enabled,
-      type: plugin.type || "custom",
-      entry_point: plugin.entry_point || "",
-      config: plugin.config || {},
-      dependencies: plugin.dependencies || [],
-      author: plugin.author || "",
-    });
-    setConfigText(JSON.stringify(plugin.config || {}, null, 2));
-    setDepsText((plugin.dependencies || []).join(", "));
-    setConfigError(null);
-    setDialogOpen(true);
-  }, []);
-
-  const handleDelete = useCallback(
-    async (plugin: Plugin) => {
-      await crud.deleteItem(plugin.id);
-    },
-    [crud]
+  const filteredItems = tools.items.filter(
+    (item) =>
+      !searchQuery ||
+      item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (item.description ?? "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (item.source ?? "").toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleSave = useCallback(async () => {
-    // Validate config JSON
-    let parsedConfig: Record<string, unknown>;
-    try {
-      parsedConfig = JSON.parse(configText);
-      if (
-        typeof parsedConfig !== "object" ||
-        parsedConfig === null ||
-        Array.isArray(parsedConfig)
-      ) {
-        setConfigError("Config must be a JSON object");
-        return;
-      }
-    } catch {
-      setConfigError("Invalid JSON syntax");
-      return;
+  // Group by source/plugin
+  const sourceMap = new Map<string, typeof tools.items>();
+  for (const tool of filteredItems) {
+    const source = tool.source ?? "built-in";
+    if (!sourceMap.has(source)) {
+      sourceMap.set(source, []);
     }
-
-    setSaving(true);
-    const deps = depsText
-      .split(",")
-      .map((d) => d.trim())
-      .filter(Boolean);
-
-    const data: PluginFormData = {
-      ...form,
-      config: parsedConfig,
-      dependencies: deps,
-    };
-
-    let result;
-    if (editingId) {
-      result = await crud.updateItem(editingId, data as unknown as Record<string, unknown>);
-    } else {
-      result = await crud.createItem(data as unknown as Record<string, unknown>);
-    }
-
-    setSaving(false);
-    if (result) {
-      setDialogOpen(false);
-    }
-  }, [form, configText, depsText, editingId, crud]);
-
-  const typeOptions = PLUGIN_TYPES.map((t) => ({
-    value: t,
-    label: t.charAt(0).toUpperCase() + t.slice(1),
-  }));
+    sourceMap.get(source)!.push(tool);
+  }
 
   return (
     <>
-      <CrudTable<Plugin>
-        title="Plugins"
-        description="Install and configure plugins for your OpenClaw instance"
-        items={crud.items}
-        columns={columns}
-        loading={crud.loading}
-        error={crud.error}
-        operationLoading={saving}
-        onAdd={openAdd}
-        onEdit={openEdit}
-        onDelete={handleDelete}
-        onRefresh={crud.fetchItems}
-        onClearError={() => crud.setError(null)}
-        searchPlaceholder="Search plugins..."
-        emptyMessage="No plugins installed yet"
-        addLabel="Add Plugin"
-      />
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+        <div>
+          <h2 className="text-2xl font-bold text-foreground">
+            Plugins & Tools
+          </h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Available tools and plugins in your OpenClaw instance
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={tools.fetchItems}
+          disabled={tools.loading}
+        >
+          <RefreshCw
+            size={14}
+            className={cn(tools.loading && "animate-spin")}
+          />
+          Refresh
+        </Button>
+      </div>
 
-      {/* Plugin Form Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent onClose={() => setDialogOpen(false)}>
-          <DialogHeader>
-            <DialogTitle>
-              {editingId ? "Edit Plugin" : "Add Plugin"}
-            </DialogTitle>
-            <DialogDescription>
-              {editingId
-                ? "Update the plugin configuration"
-                : "Install a new plugin"}
-            </DialogDescription>
-          </DialogHeader>
+      {tools.error && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <AlertCircle size={16} className="shrink-0" />
+          <span className="flex-1">{tools.error}</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => tools.setError(null)}
+            className="text-destructive hover:text-destructive"
+          >
+            Dismiss
+          </Button>
+        </div>
+      )}
 
-          <div className="space-y-4">
-            {/* Name */}
-            <div className="space-y-2">
-              <Label htmlFor="plugin-name">Name *</Label>
-              <Input
-                id="plugin-name"
-                value={form.name}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, name: e.target.value }))
-                }
-                placeholder="e.g., my-custom-plugin"
-              />
+      {/* Search */}
+      <div className="relative mb-4">
+        <Search
+          size={16}
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+        />
+        <Input
+          placeholder="Search tools and plugins..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="pl-9"
+        />
+      </div>
+
+      {/* Loading */}
+      {tools.loading && tools.items.length === 0 && (
+        <div className="flex items-center justify-center py-16 text-muted-foreground">
+          <Loader2 size={20} className="animate-spin mr-2" />
+          Loading tools...
+        </div>
+      )}
+
+      {/* Empty */}
+      {!tools.loading && filteredItems.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+          <Puzzle size={40} className="mb-3 opacity-30" />
+          <p className="text-sm font-medium">
+            {searchQuery ? "No tools match" : "No tools available"}
+          </p>
+          <p className="text-xs mt-1">
+            Install plugins in your OpenClaw config to add tools
+          </p>
+        </div>
+      )}
+
+      {/* Tool groups by source */}
+      <div className="space-y-4">
+        {Array.from(sourceMap.entries()).map(([source, sourceTools]) => (
+          <div
+            key={source}
+            className="rounded-xl border border-border bg-card overflow-hidden"
+          >
+            <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center gap-2">
+              <Puzzle size={14} className="text-muted-foreground" />
+              <span className="font-semibold text-sm text-foreground">
+                {source}
+              </span>
+              <Badge variant="secondary" className="text-[10px]">
+                {sourceTools.length} tool
+                {sourceTools.length !== 1 ? "s" : ""}
+              </Badge>
             </div>
 
-            {/* Type & Version row */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label htmlFor="plugin-type">Type</Label>
-                <Select
-                  id="plugin-type"
-                  value={form.type || "custom"}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, type: e.target.value }))
-                  }
-                  options={typeOptions}
-                />
+            {sourceTools.map((tool) => (
+              <div
+                key={tool.id}
+                className="px-4 py-2.5 border-b border-border/50 last:border-b-0 hover:bg-muted/20 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-sm text-foreground">
+                    {tool.name}
+                  </span>
+                  {tool.type && (
+                    <Badge variant="outline" className="text-[10px]">
+                      {tool.type}
+                    </Badge>
+                  )}
+                </div>
+                {tool.description && (
+                  <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                    {tool.description}
+                  </p>
+                )}
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="plugin-version">Version</Label>
-                <Input
-                  id="plugin-version"
-                  value={form.version || ""}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, version: e.target.value }))
-                  }
-                  placeholder="1.0.0"
-                />
-              </div>
-            </div>
-
-            {/* Description */}
-            <div className="space-y-2">
-              <Label htmlFor="plugin-desc">Description</Label>
-              <Input
-                id="plugin-desc"
-                value={form.description || ""}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, description: e.target.value }))
-                }
-                placeholder="Brief description of this plugin"
-              />
-            </div>
-
-            {/* Author */}
-            <div className="space-y-2">
-              <Label htmlFor="plugin-author">Author</Label>
-              <Input
-                id="plugin-author"
-                value={form.author || ""}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, author: e.target.value }))
-                }
-                placeholder="Author name or organization"
-              />
-            </div>
-
-            {/* Entry Point */}
-            <div className="space-y-2">
-              <Label htmlFor="plugin-entry">Entry Point</Label>
-              <Input
-                id="plugin-entry"
-                value={form.entry_point || ""}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, entry_point: e.target.value }))
-                }
-                placeholder="e.g., plugins.my_plugin:main"
-                className="font-mono text-xs"
-              />
-            </div>
-
-            {/* Dependencies */}
-            <div className="space-y-2">
-              <Label htmlFor="plugin-deps">
-                Dependencies{" "}
-                <span className="text-muted-foreground font-normal">
-                  (comma-separated)
-                </span>
-              </Label>
-              <Input
-                id="plugin-deps"
-                value={depsText}
-                onChange={(e) => setDepsText(e.target.value)}
-                placeholder="e.g., requests, beautifulsoup4"
-                className="font-mono text-xs"
-              />
-            </div>
-
-            {/* Enabled toggle */}
-            <div className="flex items-center justify-between">
-              <Label htmlFor="plugin-enabled">Enabled</Label>
-              <Switch
-                id="plugin-enabled"
-                checked={form.enabled}
-                onCheckedChange={(checked) =>
-                  setForm((f) => ({ ...f, enabled: checked }))
-                }
-              />
-            </div>
-
-            {/* Config JSON */}
-            <div className="space-y-2">
-              <Label htmlFor="plugin-config">Configuration (JSON)</Label>
-              <Textarea
-                id="plugin-config"
-                value={configText}
-                onChange={(e) => {
-                  setConfigText(e.target.value);
-                  setConfigError(null);
-                }}
-                placeholder='{"setting": "value"}'
-                className="font-mono text-xs min-h-[100px]"
-              />
-              {configError && (
-                <p className="text-xs text-destructive">{configError}</p>
-              )}
-            </div>
+            ))}
           </div>
+        ))}
+      </div>
 
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDialogOpen(false)}
-              disabled={saving}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSave}
-              disabled={saving || !form.name.trim()}
-            >
-              {saving && <Loader2 size={14} className="animate-spin mr-1" />}
-              {editingId ? "Update" : "Create"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {tools.items.length > 0 && (
+        <p className="text-xs text-muted-foreground mt-3">
+          {tools.items.length} tool{tools.items.length !== 1 ? "s" : ""} across{" "}
+          {sourceMap.size} source{sourceMap.size !== 1 ? "s" : ""}
+        </p>
+      )}
     </>
   );
 }

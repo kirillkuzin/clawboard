@@ -1,267 +1,195 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
-import { useCrud } from "@/hooks/use-crud";
-import { Channel, ChannelFormData, CHANNEL_TYPES } from "@/lib/types";
-import { CrudTable, EnabledBadge, type Column } from "./crud-table";
+import React, { useState } from "react";
+import { cn } from "@/lib/utils";
 import {
-  Dialog,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogContent,
-  DialogFooter,
-} from "@/components/ui/dialog";
+  useGatewayChannels,
+  type GatewayChannel,
+} from "@/hooks/use-gateway-channels";
+import { GatewayGuard } from "@/components/gateway-guard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Loader2 } from "lucide-react";
-
-const EMPTY_FORM: ChannelFormData = {
-  name: "",
-  type: "slack",
-  enabled: true,
-  config: {},
-  description: "",
-};
-
-const columns: Column<Channel>[] = [
-  {
-    key: "name",
-    label: "Name",
-    render: (item) => (
-      <span className="font-medium text-foreground">{item.name}</span>
-    ),
-  },
-  {
-    key: "type",
-    label: "Type",
-    render: (item) => (
-      <Badge variant="outline" className="capitalize">
-        {item.type}
-      </Badge>
-    ),
-  },
-  {
-    key: "enabled",
-    label: "Status",
-    render: (item) => <EnabledBadge enabled={item.enabled} />,
-  },
-  {
-    key: "description",
-    label: "Description",
-    className: "hidden md:table-cell max-w-[200px] truncate",
-    render: (item) => (
-      <span className="text-muted-foreground text-xs">
-        {item.description || "—"}
-      </span>
-    ),
-  },
-];
+import {
+  RefreshCw,
+  AlertCircle,
+  Search,
+  Radio,
+  Loader2,
+  LogOut,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
 
 export function ChannelsSection() {
-  const crud = useCrud<Channel>({ basePath: "/api/v1/channels" });
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<ChannelFormData>(EMPTY_FORM);
-  const [configText, setConfigText] = useState("{}");
-  const [configError, setConfigError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  const openAdd = useCallback(() => {
-    setEditingId(null);
-    setForm(EMPTY_FORM);
-    setConfigText("{}");
-    setConfigError(null);
-    setDialogOpen(true);
-  }, []);
-
-  const openEdit = useCallback((channel: Channel) => {
-    setEditingId(channel.id);
-    setForm({
-      name: channel.name,
-      type: channel.type,
-      enabled: channel.enabled,
-      config: channel.config || {},
-      description: channel.description || "",
-    });
-    setConfigText(JSON.stringify(channel.config || {}, null, 2));
-    setConfigError(null);
-    setDialogOpen(true);
-  }, []);
-
-  const handleDelete = useCallback(
-    async (channel: Channel) => {
-      await crud.deleteItem(channel.id);
-    },
-    [crud]
+  return (
+    <GatewayGuard>
+      <ChannelsSectionInner />
+    </GatewayGuard>
   );
+}
 
-  const handleSave = useCallback(async () => {
-    // Validate config JSON
-    let parsedConfig: Record<string, unknown>;
-    try {
-      parsedConfig = JSON.parse(configText);
-      if (typeof parsedConfig !== "object" || parsedConfig === null || Array.isArray(parsedConfig)) {
-        setConfigError("Config must be a JSON object");
-        return;
-      }
-    } catch {
-      setConfigError("Invalid JSON syntax");
-      return;
-    }
+function ChannelsSectionInner() {
+  const channels = useGatewayChannels();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [loggingOut, setLoggingOut] = useState<string | null>(null);
 
-    setSaving(true);
-    const data: ChannelFormData = {
-      ...form,
-      config: parsedConfig,
-    };
+  const handleLogout = async (channel: GatewayChannel) => {
+    setLoggingOut(channel.id);
+    await channels.logoutChannel(channel.type);
+    setLoggingOut(null);
+  };
 
-    let result;
-    if (editingId) {
-      result = await crud.updateItem(editingId, data as unknown as Record<string, unknown>);
-    } else {
-      result = await crud.createItem(data as unknown as Record<string, unknown>);
-    }
-
-    setSaving(false);
-    if (result) {
-      setDialogOpen(false);
-    }
-  }, [form, configText, editingId, crud]);
+  const filteredItems = channels.items.filter(
+    (item) =>
+      !searchQuery ||
+      item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.type.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
     <>
-      <CrudTable<Channel>
-        title="Channels"
-        description="Configure communication channels for your OpenClaw instance"
-        items={crud.items}
-        columns={columns}
-        loading={crud.loading}
-        error={crud.error}
-        operationLoading={saving}
-        onAdd={openAdd}
-        onEdit={openEdit}
-        onDelete={handleDelete}
-        onRefresh={crud.fetchItems}
-        onClearError={() => crud.setError(null)}
-        searchPlaceholder="Search channels..."
-        emptyMessage="No channels configured yet"
-        addLabel="Add Channel"
-      />
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+        <div>
+          <h2 className="text-2xl font-bold text-foreground">Channels</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Communication channel connection status
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={channels.fetchItems}
+          disabled={channels.loading}
+        >
+          <RefreshCw
+            size={14}
+            className={cn(channels.loading && "animate-spin")}
+          />
+          Refresh
+        </Button>
+      </div>
 
-      {/* Channel Form Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent onClose={() => setDialogOpen(false)}>
-          <DialogHeader>
-            <DialogTitle>
-              {editingId ? "Edit Channel" : "Create Channel"}
-            </DialogTitle>
-            <DialogDescription>
-              {editingId
-                ? "Update the channel configuration"
-                : "Add a new communication channel"}
-            </DialogDescription>
-          </DialogHeader>
+      {channels.error && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <AlertCircle size={16} className="shrink-0" />
+          <span className="flex-1">{channels.error}</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => channels.setError(null)}
+            className="text-destructive hover:text-destructive"
+          >
+            Dismiss
+          </Button>
+        </div>
+      )}
 
-          <div className="space-y-4 py-4">
-            {/* Name */}
-            <div className="space-y-2">
-              <Label htmlFor="channel-name">Name *</Label>
-              <Input
-                id="channel-name"
-                value={form.name}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, name: e.target.value }))
-                }
-                placeholder="e.g., slack-general"
-              />
-            </div>
+      {/* Search */}
+      <div className="relative mb-4">
+        <Search
+          size={16}
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+        />
+        <Input
+          placeholder="Search channels..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="pl-9"
+        />
+      </div>
 
-            {/* Type */}
-            <div className="space-y-2">
-              <Label htmlFor="channel-type">Type *</Label>
-              <Select
-                id="channel-type"
-                value={form.type}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, type: e.target.value }))
-                }
-                options={CHANNEL_TYPES.map((t) => ({
-                  value: t,
-                  label: t.charAt(0).toUpperCase() + t.slice(1),
-                }))}
-              />
-            </div>
+      {/* Loading */}
+      {channels.loading && channels.items.length === 0 && (
+        <div className="flex items-center justify-center py-16 text-muted-foreground">
+          <Loader2 size={20} className="animate-spin mr-2" />
+          Loading channels...
+        </div>
+      )}
 
-            {/* Description */}
-            <div className="space-y-2">
-              <Label htmlFor="channel-desc">Description</Label>
-              <Input
-                id="channel-desc"
-                value={form.description || ""}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, description: e.target.value }))
-                }
-                placeholder="Brief description of this channel"
-              />
-            </div>
+      {/* Empty */}
+      {!channels.loading && filteredItems.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+          <Radio size={40} className="mb-3 opacity-30" />
+          <p className="text-sm font-medium">
+            {searchQuery ? "No channels match" : "No channels configured"}
+          </p>
+          <p className="text-xs mt-1">
+            Configure channels in your OpenClaw config file
+          </p>
+        </div>
+      )}
 
-            {/* Enabled toggle */}
-            <div className="flex items-center justify-between">
-              <Label htmlFor="channel-enabled">Enabled</Label>
-              <Switch
-                id="channel-enabled"
-                checked={form.enabled}
-                onCheckedChange={(checked) =>
-                  setForm((f) => ({ ...f, enabled: checked }))
-                }
-              />
-            </div>
-
-            {/* Config JSON */}
-            <div className="space-y-2">
-              <Label htmlFor="channel-config">
-                Configuration (JSON)
-              </Label>
-              <Textarea
-                id="channel-config"
-                value={configText}
-                onChange={(e) => {
-                  setConfigText(e.target.value);
-                  setConfigError(null);
-                }}
-                placeholder='{"token": "xoxb-...", "channel": "#general"}'
-                className="font-mono text-xs min-h-[100px]"
-              />
-              {configError && (
-                <p className="text-xs text-destructive">{configError}</p>
+      {/* Channel cards */}
+      <div className="grid gap-3">
+        {filteredItems.map((channel) => (
+          <div
+            key={channel.id}
+            className="flex items-center gap-4 rounded-xl border border-border bg-card px-4 py-3 hover:bg-muted/20 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              {channel.connected ? (
+                <Wifi size={16} className="text-emerald-500" />
+              ) : (
+                <WifiOff size={16} className="text-muted-foreground" />
               )}
             </div>
-          </div>
 
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDialogOpen(false)}
-              disabled={saving}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-sm text-foreground capitalize">
+                  {channel.name}
+                </span>
+                <Badge variant="outline" className="text-[10px] capitalize">
+                  {channel.type}
+                </Badge>
+              </div>
+              {channel.account && (
+                <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                  {channel.account}
+                </p>
+              )}
+              {channel.error && (
+                <p className="text-xs text-destructive mt-0.5 truncate">
+                  {channel.error}
+                </p>
+              )}
+            </div>
+
+            <Badge
+              variant={channel.connected ? "success" : "secondary"}
+              className="shrink-0"
             >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSave}
-              disabled={saving || !form.name.trim()}
-            >
-              {saving && <Loader2 size={14} className="animate-spin mr-1" />}
-              {editingId ? "Update" : "Create"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              {channel.connected ? "Connected" : "Offline"}
+            </Badge>
+
+            {channel.connected && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handleLogout(channel)}
+                disabled={loggingOut === channel.id}
+                className="text-muted-foreground hover:text-destructive"
+              >
+                {loggingOut === channel.id ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <LogOut size={14} />
+                )}
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {filteredItems.length > 0 && (
+        <p className="text-xs text-muted-foreground mt-3">
+          {filteredItems.filter((c) => c.connected).length} of{" "}
+          {filteredItems.length} channel
+          {filteredItems.length !== 1 ? "s" : ""} connected
+        </p>
+      )}
     </>
   );
 }
