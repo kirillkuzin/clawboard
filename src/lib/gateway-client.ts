@@ -336,8 +336,9 @@ export class GatewayClient {
     const clientId = "openclaw-control-ui"; // must match client.id sent in connect params
     const clientMode = "ui"; // must match client.mode sent in connect params
     const role = "operator";
-    const token = this.opts.token ?? "";
-    const scopesList = ["operator.read", "operator.write", "operator.admin", "operator.pairing", "operator.approvals"];
+    const signatureToken = this.opts.token ?? this.identity.deviceToken ?? null;
+    const token = signatureToken ?? "";
+    const scopesList = ["operator.admin", "operator.approvals", "operator.pairing", "operator.read", "operator.write"];
     const scopes = scopesList.join(",");
 
     // Build v3 canonical payload — must exactly match server-side buildDeviceAuthPayloadV3:
