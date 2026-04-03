@@ -337,7 +337,8 @@ export class GatewayClient {
     const clientMode = "ui"; // must match client.mode sent in connect params
     const role = "operator";
     const token = this.opts.token ?? "";
-    const scopesList = ["operator.read", "operator.write", "operator.admin", "operator.pairing", "operator.approvals"];
+    // Server normalizes scopes (dedup + sort) before building payload — must match exactly
+    const scopesList = ["operator.admin", "operator.approvals", "operator.pairing", "operator.read", "operator.write"];
     const scopes = scopesList.join(",");
 
     // Build v3 canonical payload — must exactly match server-side buildDeviceAuthPayloadV3:
