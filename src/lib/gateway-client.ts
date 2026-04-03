@@ -206,6 +206,10 @@ export class GatewayClient {
         // failures, just go to disconnected — user clicks Connect again.
         if (this.state.authState === "authenticated") {
           this.scheduleReconnect();
+        } else if (this.state.authState === "pending_pairing") {
+          // Gateway closes the connection after sending NOT_PAIRED —
+          // preserve the pending_pairing state so the UI can show it.
+          this.updateWsState("disconnected");
         } else {
           this.updateWsState("disconnected");
           this.updateAuthState("disconnected");
@@ -392,7 +396,22 @@ export class GatewayClient {
         locale: typeof navigator !== "undefined" ? navigator.language : "en",
       });
 
+      // Gateway responds with hello-ok: { ok: true, payload: { type: "hello-ok", protocol, auth? } }
+      // OR pending pairing: { ok: false, error: { code: "NOT_PAIRED", details: { code: "PAIRING_REQUIRED" } } }
+      const errorCode = (response.error as Record<string, unknown> | undefined)?.code as string | undefined;
+      const errorDetails = (response.error as Record<string, unknown> | undefined)?.details as Record<string, unknown> | undefined;
+      const errorDetailCode = errorDetails?.code as string | undefined;
+      const isPairingRequired =
+        errorCode === "NOT_PAIRED" ||
+        errorCode === "PENDING_PAIRING" ||
+        errorDetailCode === "PAIRING_REQUIRED";
+
       if (!response.ok) {
+        if (isPairingRequired) {
+          this.updateAuthState("pending_pairing");
+          this.handlers.onPendingPairing?.();
+          return;
+        }
         this.updateAuthState("error");
         this.state.error =
           response.error?.message || "Authentication rejected";
@@ -400,8 +419,6 @@ export class GatewayClient {
         return;
       }
 
-      // Gateway responds with hello-ok: { payload: { type: "hello-ok", protocol, auth?: { deviceToken, role, scopes } } }
-      // OR pending pairing: { ok: false, error: { code: "PENDING_PAIRING", ... } }
       const payload = response.payload as Record<string, unknown> | undefined;
       const payloadType = payload?.type as string | undefined;
 
@@ -422,7 +439,7 @@ export class GatewayClient {
         return;
       }
 
-      if (payloadType === "pending-pairing" || (response.error as Record<string, unknown> | undefined)?.code === "PENDING_PAIRING") {
+      if (payloadType === "pending-pairing" || isPairingRequired) {
         this.updateAuthState("pending_pairing");
         this.handlers.onPendingPairing?.();
         return;

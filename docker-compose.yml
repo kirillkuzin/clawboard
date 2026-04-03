@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
       args:
         OPENCLAW_API_URL: ${OPENCLAW_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_OPENCLAW_GATEWAY_WS_URL: ${NEXT_PUBLIC_OPENCLAW_GATEWAY_WS_URL:-wss://clawboard.crazybrain.space/gateway}
+        NEXT_PUBLIC_OPENCLAW_GATEWAY_TOKEN: ${NEXT_PUBLIC_OPENCLAW_GATEWAY_TOKEN:-778692ecfdc7e7991e7e69cb0c4718ce8a2af66a89c83491}
     container_name: clawboard
     ports:
       - "${CLAWBOARD_PORT:-3000}:3000"

@@ -6,6 +6,8 @@ const STORAGE_KEY_GATEWAY_URL = "clawboard_gateway_ws_url";
 const STORAGE_KEY_GATEWAY_TOKEN = "clawboard_gateway_token";
 const DEFAULT_GATEWAY_URL =
   process.env.NEXT_PUBLIC_OPENCLAW_GATEWAY_WS_URL || "ws://localhost:18789";
+const DEFAULT_GATEWAY_TOKEN =
+  process.env.NEXT_PUBLIC_OPENCLAW_GATEWAY_TOKEN || "";
 
 /** All localStorage keys managed by the settings system */
 export const SETTINGS_STORAGE_KEYS = {
@@ -30,7 +32,7 @@ export interface Settings {
  */
 export function useSettings() {
   const [gatewayUrl, setGatewayUrlState] = useState<string>(DEFAULT_GATEWAY_URL);
-  const [gatewayToken, setGatewayTokenState] = useState<string>("");
+  const [gatewayToken, setGatewayTokenState] = useState<string>(DEFAULT_GATEWAY_TOKEN);
   // Password is kept in memory only — not persisted to localStorage
   const [gatewayPassword, setGatewayPassword] = useState<string>("");
   const [isLoaded, setIsLoaded] = useState(false);
@@ -41,7 +43,7 @@ export function useSettings() {
       const storedUrl =
         localStorage.getItem(STORAGE_KEY_GATEWAY_URL) || DEFAULT_GATEWAY_URL;
       const storedToken =
-        localStorage.getItem(STORAGE_KEY_GATEWAY_TOKEN) || "";
+        localStorage.getItem(STORAGE_KEY_GATEWAY_TOKEN) || DEFAULT_GATEWAY_TOKEN;
       setGatewayUrlState(storedUrl);
       setGatewayTokenState(storedToken);
     } catch {
