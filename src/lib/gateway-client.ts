@@ -26,7 +26,7 @@ import type {
 
 import {
   getOrCreateDeviceIdentity,
-  signChallenge,
+  signPayload,
   updateDeviceToken,
   type DeviceIdentity,
 } from "./device-identity";
@@ -357,8 +357,9 @@ export class GatewayClient {
       deviceFamily.toLowerCase(),
     ].join("|");
 
-    // Sign with Ed25519 secret key
-    const signature = signChallenge(canonicalPayload, this.identity.secretKey);
+    // Sign with Ed25519 private key (WebCrypto)
+    const privKey = this.identity.privateKey ?? this.identity.secretKey ?? "";
+    const signature = await signPayload(canonicalPayload, privKey);
 
     try {
       // Build auth field
