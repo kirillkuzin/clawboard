@@ -67,8 +67,7 @@ export function SettingsSection() {
 
   const handleResetDeviceIdentity = useCallback(() => {
     clearDeviceIdentity();
-    const newIdentity = getOrCreateDeviceIdentity();
-    setDeviceIdentity(newIdentity);
+    getOrCreateDeviceIdentity().then(setDeviceIdentity);
   }, []);
 
   const handleCopyToClipboard = useCallback(
@@ -370,8 +369,7 @@ export function SettingsSection() {
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      const identity = getOrCreateDeviceIdentity();
-                      setDeviceIdentity(identity);
+                      getOrCreateDeviceIdentity().then(setDeviceIdentity);
                     }}
                   >
                     Generate Now

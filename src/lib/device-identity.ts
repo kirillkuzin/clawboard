@@ -60,9 +60,26 @@ export function fromHex(hex: string): Uint8Array {
   return bytes;
 }
 
-/** Derive deviceId from the public key (full 32 bytes → 64 hex chars) */
-function deriveDeviceId(publicKey: Uint8Array): string {
-  return toHex(publicKey);
+/** Convert Uint8Array to base64url string (no padding) */
+export function toBase64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+/** Convert base64url string to Uint8Array */
+export function fromBase64Url(b64: string): Uint8Array {
+  const padded = b64.replace(/-/g, '+').replace(/_/g, '/').padEnd(b64.length + (4 - b64.length % 4) % 4, '=');
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/** Derive deviceId as sha256(raw_public_key_bytes) in hex — matches OpenClaw server */
+async function deriveDeviceId(publicKey: Uint8Array): Promise<string> {
+  const hashBuffer = await crypto.subtle.digest('SHA-256', publicKey.buffer as ArrayBuffer);
+  return toHex(new Uint8Array(hashBuffer));
 }
 
 /** Generate a default device label based on browser info */
@@ -82,14 +99,17 @@ function generateDeviceLabel(): string {
 
 /**
  * Generate a new Ed25519 keypair and build a DeviceIdentity.
+ * publicKey stored as base64url (raw 32 bytes), secretKey as hex.
+ * deviceId is computed async as sha256(publicKeyBytes) — call getOrCreateDeviceIdentity() instead.
  */
-export function generateDeviceIdentity(): DeviceIdentity {
+export async function generateDeviceIdentity(): Promise<DeviceIdentity> {
   const keyPair = nacl.sign.keyPair();
+  const deviceId = await deriveDeviceId(keyPair.publicKey);
 
   return {
-    publicKey: toHex(keyPair.publicKey),
+    publicKey: toBase64Url(keyPair.publicKey),
     secretKey: toHex(keyPair.secretKey),
-    deviceId: deriveDeviceId(keyPair.publicKey),
+    deviceId,
     deviceToken: "",
     deviceLabel: generateDeviceLabel(),
     createdAt: Date.now(),
@@ -119,8 +139,11 @@ export function loadDeviceIdentity(): DeviceIdentity | null {
       return null;
     }
 
-    // Verify the keypair is still valid (public key length = 32 bytes = 64 hex chars)
-    if (parsed.publicKey.length !== 64 || parsed.secretKey.length !== 128) {
+    // Verify the keypair is still valid
+    // publicKey: base64url of 32 bytes (~43 chars) OR legacy hex (64 chars)
+    // secretKey: hex of 64 bytes (128 chars)
+    const pubLen = parsed.publicKey.length;
+    if ((pubLen < 40 || pubLen > 64) || parsed.secretKey.length !== 128) {
       return null;
     }
 
@@ -149,11 +172,11 @@ export function saveDeviceIdentity(identity: DeviceIdentity): void {
  * Get or create device identity.
  * Loads from localStorage if available, otherwise generates a new one and persists it.
  */
-export function getOrCreateDeviceIdentity(): DeviceIdentity {
+export async function getOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
   const existing = loadDeviceIdentity();
   if (existing) return existing;
 
-  const identity = generateDeviceIdentity();
+  const identity = await generateDeviceIdentity();
   saveDeviceIdentity(identity);
   return identity;
 }
@@ -197,7 +220,7 @@ export function signChallenge(
   const secretKey = fromHex(secretKeyHex);
   const messageBytes = new TextEncoder().encode(challenge);
   const signature = nacl.sign.detached(messageBytes, secretKey);
-  return toHex(signature);
+  return toBase64Url(signature);
 }
 
 /**

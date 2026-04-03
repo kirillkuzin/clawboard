@@ -149,7 +149,7 @@ export class GatewayClient {
   }
 
   /** Connect to the gateway WebSocket */
-  connect(): void {
+  async connect(): Promise<void> {
     if (
       this.ws &&
       (this.ws.readyState === WebSocket.OPEN ||
@@ -160,8 +160,8 @@ export class GatewayClient {
 
     this.intentionalClose = false;
 
-    // Ensure we have a device identity
-    this.identity = getOrCreateDeviceIdentity();
+    // Ensure we have a device identity (async: sha256 fingerprint)
+    this.identity = await getOrCreateDeviceIdentity();
 
     this.updateWsState("connecting");
 
