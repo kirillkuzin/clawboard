@@ -368,7 +368,7 @@ export class GatewayClient {
         minProtocol: 3,
         maxProtocol: 3,
         client: {
-          id: "clawboard",
+          id: "cli",
           version: "0.1.0",
           platform,
           mode: "operator",
