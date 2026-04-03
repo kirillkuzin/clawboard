@@ -78,7 +78,9 @@ export function fromBase64Url(b64: string): Uint8Array {
 
 /** Derive deviceId as sha256(raw_public_key_bytes) in hex — matches OpenClaw server */
 async function deriveDeviceId(publicKey: Uint8Array): Promise<string> {
-  const hashBuffer = await crypto.subtle.digest('SHA-256', publicKey.buffer as ArrayBuffer);
+  // Copy to new ArrayBuffer to avoid issues with shared/offset buffers (tweetnacl)
+  const exactBytes = new Uint8Array(publicKey);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', exactBytes);
   return toHex(new Uint8Array(hashBuffer));
 }
 
