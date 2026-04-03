@@ -354,7 +354,7 @@ export class GatewayClient {
           name: "ClawBoard",
           version: "0.1.0",
         },
-        role: "CONTROL_UI_OPERATOR",
+        role: "operator",
         scopes: ["operator.read", "operator.write", "operator.admin", "operator.pairing", "operator.approvals"],
         device: {
           deviceId: this.identity.deviceId,
