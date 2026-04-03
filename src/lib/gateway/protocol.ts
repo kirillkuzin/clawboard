@@ -59,7 +59,7 @@ export function createRequestFrame(
   id?: string
 ): GatewayRequest {
   return {
-    frame: "req",
+    type: "req",
     id: id ?? uuid(),
     method,
     params,
@@ -106,8 +106,8 @@ export type ParsedFrame =
  * Parse and discriminate an incoming WebSocket message into a typed frame.
  *
  * Handles:
- * - Valid JSON with `frame: "res"` → GatewayResponse
- * - Valid JSON with `frame: "event"` → GatewayEvent
+ * - Valid JSON with `type: "res"` → GatewayResponse
+ * - Valid JSON with `type: "event"` → GatewayEvent
  * - Valid JSON with `frame: "req"` → GatewayRequest (server-initiated)
  * - Valid JSON with unknown/missing frame → unknown
  * - Invalid JSON → error
@@ -133,7 +133,7 @@ export function parseFrame(data: string | ArrayBuffer | Blob): ParsedFrame {
   }
 
   const obj = parsed as Record<string, unknown>;
-  const frameType = obj.frame;
+  const frameType = obj.type;
 
   switch (frameType) {
     case "res":

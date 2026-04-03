@@ -26,12 +26,12 @@
 /** Base frame with discriminator */
 export interface GatewayFrameBase {
   /** Frame type discriminator */
-  frame: "req" | "res" | "event";
+  type: "req" | "res" | "event";
 }
 
 /** Client-to-server request */
 export interface GatewayRequest extends GatewayFrameBase {
-  frame: "req";
+  type: "req";
   /** Unique request ID (UUID v4) */
   id: string;
   /** Method name (e.g., "device.auth", "device.auth.challenge") */
@@ -42,12 +42,14 @@ export interface GatewayRequest extends GatewayFrameBase {
 
 /** Server-to-client response (correlated by id) */
 export interface GatewayResponse extends GatewayFrameBase {
-  frame: "res";
+  type: "res";
   /** Correlated request ID */
   id: string;
   /** Whether the request succeeded */
   ok: boolean;
-  /** Response result data (present when ok=true) */
+  /** Response payload (present when ok=true, e.g. hello-ok) */
+  payload?: Record<string, unknown>;
+  /** Response result data (legacy, present when ok=true) */
   result?: Record<string, unknown>;
   /** Error data (present when ok=false) */
   error?: {
@@ -58,11 +60,13 @@ export interface GatewayResponse extends GatewayFrameBase {
 }
 
 /** Server-to-client push event */
-export interface GatewayEvent extends GatewayFrameBase {
-  frame: "event";
-  /** Event type (e.g., "health.update", "session.update") */
-  type: string;
+export interface GatewayEvent {
+  type: "event";
+  /** Event name (e.g., "connect.challenge", "health.update") */
+  event: string;
   /** Event payload */
+  payload: Record<string, unknown>;
+  /** Alias for payload (legacy compat) */
   data: Record<string, unknown>;
   /** Server timestamp (ISO 8601) */
   timestamp?: string;

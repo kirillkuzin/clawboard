@@ -305,10 +305,10 @@ export class GatewayClient {
   /**
    * Step 2: Handle the `connect.challenge` event from the server.
    *
-   * Server sends: { frame: "event", type: "connect.challenge", data: { challenge, nonce } }
+   * Server sends: { type: "event", event: "connect.challenge", payload: { nonce, ts } }
    *
-   * Client signs `${challenge}:${nonce}:${deviceId}` and responds with
-   * a `connect` request containing the signature + device identity.
+   * Client builds v3 canonical payload and signs it with Ed25519,
+   * then sends `connect` request with device identity.
    */
   private async handleConnectChallenge(
     data: Record<string, unknown>
@@ -321,49 +321,72 @@ export class GatewayClient {
 
     this.updateAuthState("challenge_signing");
 
-    const challenge = data.challenge as string;
     const nonce = data.nonce as string;
+    const ts = data.ts as number;
 
-    if (!challenge || !nonce) {
+    if (!nonce) {
       this.updateAuthState("error");
-      this.state.error = "Invalid connect.challenge: missing challenge or nonce";
+      this.state.error = "Invalid connect.challenge: missing nonce";
       return;
     }
 
-    // Construct canonical payload: challenge:nonce:deviceId
-    const canonicalPayload = `${challenge}:${nonce}:${this.identity.deviceId}`;
+    const signedAt = ts ?? Date.now();
+    const platform = "web";
+    const deviceFamily = "browser";
+    const clientId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `client-${Date.now()}`;
+    const token = this.opts.token ?? "";
+    const scopes = "operator.read,operator.write,operator.admin,operator.pairing,operator.approvals";
+
+    // Build v3 canonical payload:
+    // v3|deviceId|clientId|clientMode|role|scopes|signedAtMs|authToken|nonce|platform|deviceFamily
+    const canonicalPayload = [
+      "v3",
+      this.identity.deviceId,
+      clientId,
+      "device",
+      "operator",
+      scopes,
+      String(signedAt),
+      token,
+      nonce,
+      platform,
+      deviceFamily,
+    ].join("|");
 
     // Sign with Ed25519 secret key
     const signature = signChallenge(canonicalPayload, this.identity.secretKey);
 
     try {
-      // Build auth field — includes token/password if configured,
-      // plus device signature and cached deviceToken
+      // Build auth field
       const auth: Record<string, unknown> = {};
       if (this.opts.token) auth.token = this.opts.token;
       if (this.opts.password) auth.password = this.opts.password;
       if (this.identity.deviceToken) auth.deviceToken = this.identity.deviceToken;
-      auth.signature = signature;
-      auth.nonce = nonce;
 
-      // Send "connect" request matching the original OpenClaw protocol
+      // Send "connect" request per official OpenClaw protocol
       const response = await this.request("connect", {
         minProtocol: 3,
         maxProtocol: 3,
         client: {
-          name: "ClawBoard",
+          id: "clawboard",
           version: "0.1.0",
+          platform,
+          mode: "operator",
         },
         role: "operator",
-        scopes: ["operator.read", "operator.write", "operator.admin", "operator.pairing", "operator.approvals"],
+        scopes: scopes.split(","),
+        caps: [],
+        commands: [],
+        permissions: {},
         device: {
-          deviceId: this.identity.deviceId,
+          id: this.identity.deviceId,
           publicKey: this.identity.publicKey,
-          deviceLabel: this.identity.deviceLabel,
+          signature,
+          signedAt,
+          nonce,
         },
-        caps: ["tool-events"],
         auth,
-        userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "ClawBoard",
+        userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "ClawBoard/0.1.0",
         locale: typeof navigator !== "undefined" ? navigator.language : "en",
       });
 
@@ -375,17 +398,41 @@ export class GatewayClient {
         return;
       }
 
-      const result = response.result as unknown as AuthResult;
+      // Gateway responds with hello-ok: { payload: { type: "hello-ok", protocol, auth?: { deviceToken, role, scopes } } }
+      // OR pending pairing: { ok: false, error: { code: "PENDING_PAIRING", ... } }
+      const payload = response.payload as Record<string, unknown> | undefined;
+      const payloadType = payload?.type as string | undefined;
 
-      switch (result.status) {
+      if (payloadType === "hello-ok") {
+        const authData = payload?.auth as { deviceToken?: string; role?: string; scopes?: string[] } | undefined;
+        const scopes = authData?.scopes ?? [];
+        const deviceToken = authData?.deviceToken;
+
+        if (deviceToken && this.identity) {
+          updateDeviceToken(deviceToken);
+          this.identity = { ...this.identity, deviceToken };
+        }
+
+        this.state.scopes = scopes;
+        this.state.lastAuthAt = Date.now();
+        this.updateAuthState("authenticated");
+        this.handlers.onAuthenticated?.(scopes);
+        return;
+      }
+
+      if (payloadType === "pending-pairing" || (response.error as Record<string, unknown> | undefined)?.code === "PENDING_PAIRING") {
+        this.updateAuthState("pending_pairing");
+        this.handlers.onPendingPairing?.();
+        return;
+      }
+
+      // Fallback: try legacy result.status
+      const result = (response as unknown as { result?: AuthResult }).result;
+      switch (result?.status) {
         case "paired":
-          // Pairing approved — store token and mark authenticated
-          if (result.deviceToken) {
+          if (result.deviceToken && this.identity) {
             updateDeviceToken(result.deviceToken);
-            this.identity = {
-              ...this.identity,
-              deviceToken: result.deviceToken,
-            };
+            this.identity = { ...this.identity, deviceToken: result.deviceToken };
           }
           this.state.scopes = result.scopes;
           this.state.lastAuthAt = Date.now();
@@ -396,9 +443,7 @@ export class GatewayClient {
         case "authenticated":
           this.state.scopes = result.scopes;
           this.state.lastAuthAt = Date.now();
-          if (result.deviceToken) {
-            updateDeviceToken(result.deviceToken);
-          }
+          if (result.deviceToken) updateDeviceToken(result.deviceToken);
           this.updateAuthState("authenticated");
           this.handlers.onAuthenticated?.(result.scopes);
           break;
@@ -452,7 +497,7 @@ export class GatewayClient {
         // Handle legacy pong for heartbeat
         if (
           (parsed.raw as Record<string, unknown>)?.type === "pong" ||
-          (parsed.raw as Record<string, unknown>)?.frame === "pong"
+          (parsed.raw as Record<string, unknown>)?.type === "pong"
         ) {
           this.handlePong();
         }
@@ -473,14 +518,14 @@ export class GatewayClient {
   /** Handle a push event from the server */
   private handleEvent(event: GatewayEvent): void {
     // Server sends connect.challenge after WS opens — this starts the auth flow
-    if (event.type === "connect.challenge") {
-      this.handleConnectChallenge(event.data);
+    if (event.event === "connect.challenge") {
+      this.handleConnectChallenge(event.payload);
       return;
     }
 
     // Handle auth-related events (e.g., pairing approved while pending)
-    if (event.type === "device.paired") {
-      const data = event.data as {
+    if (event.event === "device.paired") {
+      const data = event.payload as {
         deviceToken?: string;
         scopes?: string[];
       };

@@ -60,9 +60,9 @@ export function fromHex(hex: string): Uint8Array {
   return bytes;
 }
 
-/** Derive a short deviceId from the public key (first 16 bytes → 32 hex chars) */
+/** Derive deviceId from the public key (full 32 bytes → 64 hex chars) */
 function deriveDeviceId(publicKey: Uint8Array): string {
-  return toHex(publicKey.slice(0, 16));
+  return toHex(publicKey);
 }
 
 /** Generate a default device label based on browser info */

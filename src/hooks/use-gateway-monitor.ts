@@ -467,7 +467,7 @@ export function useGatewayMonitor(
     setLastEvent(event);
 
     // ── 1. Route to typed widget state updaters ──
-    switch (event.type) {
+    switch (event.event) {
       case EVENT_TYPES.HEALTH_UPDATE:
         setSystemHealth(parseHealthResponse(event.data));
         break;
