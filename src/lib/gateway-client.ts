@@ -26,7 +26,7 @@ import type {
 
 import {
   getOrCreateDeviceIdentity,
-  signPayload,
+  signChallenge,
   updateDeviceToken,
   type DeviceIdentity,
 } from "./device-identity";
@@ -337,8 +337,7 @@ export class GatewayClient {
     const clientMode = "ui"; // must match client.mode sent in connect params
     const role = "operator";
     const token = this.opts.token ?? "";
-    // Server normalizes scopes (dedup + sort) before building payload — must match exactly
-    const scopesList = ["operator.admin", "operator.approvals", "operator.pairing", "operator.read", "operator.write"];
+    const scopesList = ["operator.read", "operator.write", "operator.admin", "operator.pairing", "operator.approvals"];
     const scopes = scopesList.join(",");
 
     // Build v3 canonical payload — must exactly match server-side buildDeviceAuthPayloadV3:
@@ -357,9 +356,8 @@ export class GatewayClient {
       deviceFamily.toLowerCase(),
     ].join("|");
 
-    // Sign with Ed25519 private key (WebCrypto)
-    const privKey = this.identity.privateKey ?? this.identity.secretKey ?? "";
-    const signature = await signPayload(canonicalPayload, privKey);
+    // Sign with Ed25519 secret key
+    const signature = signChallenge(canonicalPayload, this.identity.secretKey);
 
     try {
       // Build auth field

@@ -1,134 +1,90 @@
 /**
  * Device Identity Manager for OpenClaw Gateway Authentication.
  *
- * Uses WebCrypto API (SubtleCrypto) for Ed25519 keypair generation and signing.
- * This ensures compatibility with Node.js crypto used by the OpenClaw gateway server.
+ * Generates and persists an Ed25519 keypair using tweetnacl.
+ * The deviceId is derived from the hex-encoded public key.
+ * Identity is stored in localStorage and reused across sessions.
  *
- * Storage format:
- * - publicKey: base64url (raw 32 bytes)
- * - privateKey: base64url (raw 32-byte seed, NOT the 64-byte nacl secret key)
- * - deviceId: sha256(publicKeyBytes) in hex
+ * Auth flow:
+ * 1. Generate Ed25519 keypair on first use
+ * 2. Store keypair + deviceId + deviceToken in localStorage
+ * 3. On gateway connect, present deviceId + sign challenge with secret key
+ * 4. Gateway returns deviceToken after pairing approval
+ * 5. deviceToken cached for subsequent reconnects
  */
+
+import * as nacl from "tweetnacl";
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
 const STORAGE_KEY_DEVICE_IDENTITY = "clawboard_device_identity";
 
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
 export interface DeviceIdentity {
-  /** base64url-encoded raw Ed25519 public key (32 bytes) */
+  /** Hex-encoded Ed25519 public key */
   publicKey: string;
-  /** base64url-encoded raw Ed25519 private key seed (32 bytes) */
-  privateKey: string;
-  /** sha256(publicKeyBytes) in hex — matches OpenClaw server fingerprint */
+  /** Hex-encoded Ed25519 secret key (64 bytes = seed + public key) */
+  secretKey: string;
+  /** Device ID derived from public key (hex of first 16 bytes) */
   deviceId: string;
-  /** Device token issued by gateway after pairing approval */
+  /** Device token issued by gateway after pairing approval (initially empty) */
   deviceToken: string;
   /** Human-readable label for this device */
   deviceLabel: string;
   /** Timestamp when identity was first created */
   createdAt: number;
-  // Legacy fields (ignored but kept for type compat)
-  secretKey?: string;
 }
 
 // ---------------------------------------------------------------------------
-// Encoding helpers
+// Helpers
 // ---------------------------------------------------------------------------
 
+/** Convert Uint8Array to hex string */
 export function toHex(bytes: Uint8Array): string {
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
+/** Convert hex string to Uint8Array */
 export function fromHex(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+  }
   return bytes;
 }
 
+/** Convert Uint8Array to base64url string (no padding) */
 export function toBase64Url(bytes: Uint8Array): string {
-  let binary = "";
+  let binary = '';
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
+/** Convert base64url string to Uint8Array */
 export function fromBase64Url(b64: string): Uint8Array {
-  const padded = b64.replace(/-/g, "+").replace(/_/g, "/").padEnd(
-    b64.length + (4 - (b64.length % 4)) % 4, "="
-  );
+  const padded = b64.replace(/-/g, '+').replace(/_/g, '/').padEnd(b64.length + (4 - b64.length % 4) % 4, '=');
   const binary = atob(padded);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
 }
 
-// ---------------------------------------------------------------------------
-// WebCrypto helpers
-// ---------------------------------------------------------------------------
-
-async function generateKeyPair(): Promise<{ publicKey: string; privateKey: string }> {
-  const kp = await crypto.subtle.generateKey(
-    { name: "Ed25519" },
-    true,
-    ["sign", "verify"]
-  );
-
-  // Export raw public key (32 bytes)
-  const pubRaw = await crypto.subtle.exportKey("raw", kp.publicKey);
-
-  // Export private key as PKCS8, then extract the 32-byte seed
-  const privPkcs8 = await crypto.subtle.exportKey("pkcs8", kp.privateKey);
-  // PKCS8 for Ed25519: 48 bytes total, last 32 bytes are the seed
-  const privSeed = new Uint8Array(privPkcs8).slice(-32);
-
-  return {
-    publicKey: toBase64Url(new Uint8Array(pubRaw)),
-    privateKey: toBase64Url(privSeed),
-  };
-}
-
-async function computeDeviceId(publicKeyB64url: string): Promise<string> {
-  const pubBytes = fromBase64Url(publicKeyB64url);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", pubBytes.buffer as ArrayBuffer);
+/** Derive deviceId as sha256(raw_public_key_bytes) in hex — matches OpenClaw server */
+async function deriveDeviceId(publicKey: Uint8Array): Promise<string> {
+  // Copy to new ArrayBuffer to avoid issues with shared/offset buffers (tweetnacl)
+  const exactBytes = new Uint8Array(publicKey);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', exactBytes);
   return toHex(new Uint8Array(hashBuffer));
 }
 
-/**
- * Sign a payload string using the Ed25519 private key seed.
- * Returns base64url-encoded signature.
- */
-export async function signPayload(payload: string, privateKeyB64url: string): Promise<string> {
-  const seedBytes = fromBase64Url(privateKeyB64url);
-
-  // Reconstruct PKCS8 from seed (standard Ed25519 PKCS8 wrapper)
-  // Header: 302e020100300506032b657004220420 + 32-byte seed
-  const pkcs8Header = new Uint8Array([
-    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06,
-    0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
-  ]);
-  const pkcs8 = new Uint8Array(pkcs8Header.length + seedBytes.length);
-  pkcs8.set(pkcs8Header);
-  pkcs8.set(seedBytes, pkcs8Header.length);
-
-  const key = await crypto.subtle.importKey(
-    "pkcs8",
-    pkcs8,
-    { name: "Ed25519" },
-    false,
-    ["sign"]
-  );
-
-  const msgBytes = new TextEncoder().encode(payload);
-  const sig = await crypto.subtle.sign({ name: "Ed25519" }, key, msgBytes);
-  return toBase64Url(new Uint8Array(sig));
-}
-
-// Legacy sync shim (kept for backward compat, not used for signing now)
-export function signChallenge(_challenge: string, _secretKeyHex: string): string {
-  throw new Error("signChallenge is sync-only legacy — use signPayload() instead");
-}
-
-// ---------------------------------------------------------------------------
-// Identity lifecycle
-// ---------------------------------------------------------------------------
-
+/** Generate a default device label based on browser info */
 function generateDeviceLabel(): string {
   if (typeof navigator === "undefined") return "Clawboard Device";
   const ua = navigator.userAgent;
@@ -139,12 +95,22 @@ function generateDeviceLabel(): string {
   return "Clawboard Device";
 }
 
+// ---------------------------------------------------------------------------
+// Core API
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a new Ed25519 keypair and build a DeviceIdentity.
+ * publicKey stored as base64url (raw 32 bytes), secretKey as hex.
+ * deviceId is computed async as sha256(publicKeyBytes) — call getOrCreateDeviceIdentity() instead.
+ */
 export async function generateDeviceIdentity(): Promise<DeviceIdentity> {
-  const { publicKey, privateKey } = await generateKeyPair();
-  const deviceId = await computeDeviceId(publicKey);
+  const keyPair = nacl.sign.keyPair();
+  const deviceId = await deriveDeviceId(keyPair.publicKey);
+
   return {
-    publicKey,
-    privateKey,
+    publicKey: toBase64Url(keyPair.publicKey),
+    secretKey: toHex(keyPair.secretKey),
     deviceId,
     deviceToken: "",
     deviceLabel: generateDeviceLabel(),
@@ -152,53 +118,128 @@ export async function generateDeviceIdentity(): Promise<DeviceIdentity> {
   };
 }
 
+/**
+ * Load device identity from localStorage.
+ * Returns null if not found or corrupted.
+ */
 export function loadDeviceIdentity(): DeviceIdentity | null {
   if (typeof window === "undefined") return null;
+
   try {
     const raw = localStorage.getItem(STORAGE_KEY_DEVICE_IDENTITY);
     if (!raw) return null;
+
     const parsed = JSON.parse(raw) as DeviceIdentity;
-    // Must have privateKey (new format) and deviceId
-    if (!parsed.publicKey || !parsed.deviceId || typeof parsed.createdAt !== "number") return null;
-    if (!parsed.privateKey && !parsed.secretKey) return null; // no signing key
+
+    // Validate required fields
+    if (
+      !parsed.publicKey ||
+      !parsed.secretKey ||
+      !parsed.deviceId ||
+      typeof parsed.createdAt !== "number"
+    ) {
+      return null;
+    }
+
+    // Verify the keypair is still valid
+    // publicKey: base64url of 32 bytes (~43 chars) OR legacy hex (64 chars)
+    // secretKey: hex of 64 bytes (128 chars)
+    const pubLen = parsed.publicKey.length;
+    if ((pubLen < 40 || pubLen > 64) || parsed.secretKey.length !== 128) {
+      return null;
+    }
+
     return parsed;
   } catch {
+    // Corrupted data — will regenerate
     return null;
   }
 }
 
+/**
+ * Save device identity to localStorage.
+ */
 export function saveDeviceIdentity(identity: DeviceIdentity): void {
   if (typeof window === "undefined") return;
+
   try {
     localStorage.setItem(STORAGE_KEY_DEVICE_IDENTITY, JSON.stringify(identity));
   } catch {
-    console.warn("[DeviceIdentity] Failed to save to localStorage");
+    // Storage full or unavailable — silently fail
+    console.warn("[DeviceIdentity] Failed to save identity to localStorage");
   }
 }
 
+/**
+ * Get or create device identity.
+ * Loads from localStorage if available, otherwise generates a new one and persists it.
+ */
 export async function getOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
   const existing = loadDeviceIdentity();
   if (existing) return existing;
+
   const identity = await generateDeviceIdentity();
   saveDeviceIdentity(identity);
   return identity;
 }
 
+/**
+ * Update the device token after gateway pairing approval.
+ */
 export function updateDeviceToken(token: string): DeviceIdentity | null {
   const identity = loadDeviceIdentity();
   if (!identity) return null;
+
   identity.deviceToken = token;
   saveDeviceIdentity(identity);
   return identity;
 }
 
+/**
+ * Clear the stored device identity (for debugging/reset).
+ */
 export function clearDeviceIdentity(): void {
   if (typeof window === "undefined") return;
   try {
     localStorage.removeItem(STORAGE_KEY_DEVICE_IDENTITY);
-  } catch { /* ignore */ }
+  } catch {
+    // ignore
+  }
 }
 
-export function verifySignature(_challenge: string, _sig: string, _pub: string): boolean {
-  return false; // not used
+/**
+ * Sign a challenge string with the device's secret key.
+ * Used during the gateway authentication handshake.
+ *
+ * @param challenge - The challenge string from the gateway
+ * @param secretKeyHex - Hex-encoded Ed25519 secret key
+ * @returns Hex-encoded signature
+ */
+export function signChallenge(
+  challenge: string,
+  secretKeyHex: string
+): string {
+  const secretKey = fromHex(secretKeyHex);
+  const messageBytes = new TextEncoder().encode(challenge);
+  const signature = nacl.sign.detached(messageBytes, secretKey);
+  return toBase64Url(signature);
+}
+
+/**
+ * Verify a signature (useful for testing).
+ *
+ * @param challenge - The original challenge string
+ * @param signatureHex - Hex-encoded signature
+ * @param publicKeyHex - Hex-encoded public key
+ * @returns true if signature is valid
+ */
+export function verifySignature(
+  challenge: string,
+  signatureHex: string,
+  publicKeyHex: string
+): boolean {
+  const publicKey = fromHex(publicKeyHex);
+  const signature = fromHex(signatureHex);
+  const messageBytes = new TextEncoder().encode(challenge);
+  return nacl.sign.detached.verify(messageBytes, signature, publicKey);
 }
