@@ -333,24 +333,27 @@ export class GatewayClient {
     const signedAt = ts ?? Date.now();
     const platform = "web";
     const deviceFamily = "browser";
-    const clientId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `client-${Date.now()}`;
+    const clientId = "openclaw-control-ui"; // must match client.id sent in connect params
+    const clientMode = "ui"; // must match client.mode sent in connect params
+    const role = "operator";
     const token = this.opts.token ?? "";
-    const scopes = "operator.read,operator.write,operator.admin,operator.pairing,operator.approvals";
+    const scopesList = ["operator.read", "operator.write", "operator.admin", "operator.pairing", "operator.approvals"];
+    const scopes = scopesList.join(",");
 
-    // Build v3 canonical payload:
+    // Build v3 canonical payload — must exactly match server-side buildDeviceAuthPayloadV3:
     // v3|deviceId|clientId|clientMode|role|scopes|signedAtMs|authToken|nonce|platform|deviceFamily
     const canonicalPayload = [
       "v3",
       this.identity.deviceId,
       clientId,
-      "device",
-      "operator",
+      clientMode,
+      role,
       scopes,
       String(signedAt),
       token,
       nonce,
-      platform,
-      deviceFamily,
+      platform.toLowerCase(),
+      deviceFamily.toLowerCase(),
     ].join("|");
 
     // Sign with Ed25519 secret key
@@ -368,16 +371,14 @@ export class GatewayClient {
         minProtocol: 3,
         maxProtocol: 3,
         client: {
-          id: "openclaw-control-ui",
+          id: clientId,
           version: "0.1.0",
           platform,
-          mode: "ui",
+          deviceFamily,
+          mode: clientMode,
         },
-        role: "operator",
-        scopes: scopes.split(","),
-        caps: [],
-        commands: [],
-        permissions: {},
+        role,
+        scopes: scopesList,
         device: {
           id: this.identity.deviceId,
           publicKey: this.identity.publicKey,
